@@ -49,6 +49,7 @@ jobs:
           cat > $GITHUB_WORKSPACE/builds/$REPO_NAME.json << EOF
           {
             "name": "$REPO_NAME",
+            "iconUrl": "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/master/icon.png",
             "description": "OTT Clone Plugins for Cloudstream",
             "manifestVersion": 1,
             "pluginLists": [
