@@ -2,6 +2,11 @@
 
 **Shortcode**: `sevouz`
 
+**Repository URL**: 
+```
+https://raw.githubusercontent.com/sevouz/ottclones/builds/ottclones.json
+```
+
 ---
 
 ## 🧰 Tools & Technologies
