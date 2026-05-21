@@ -45,6 +45,17 @@ jobs:
           ./gradlew make makePluginsJson
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
+          REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
+          cat > $GITHUB_WORKSPACE/builds/$REPO_NAME.json << EOF
+          {
+            "name": "$REPO_NAME",
+            "description": "OTT Clone Plugins for Cloudstream",
+            "manifestVersion": 1,
+            "pluginLists": [
+              "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/builds/plugins.json"
+            ]
+          }
+          EOF
 
       - name: Push builds
         run: |
