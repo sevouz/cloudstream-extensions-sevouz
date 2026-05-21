@@ -1,4 +1,4 @@
-## Ott clones - Cloudstream Extention
+## ottclones - Cloudstream Extention
 
 **Repository URL**: 
 ```
