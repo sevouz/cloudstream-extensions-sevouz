@@ -1,6 +1,4 @@
-# 🎯 Sevouz Cloudstream Plugin Server
-
-**Shortcode**: `sevouz`
+## Ott clones - Cloudstream Extention
 
 **Repository URL**: 
 ```
