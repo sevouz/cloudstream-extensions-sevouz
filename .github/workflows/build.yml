@@ -23,8 +23,8 @@ jobs:
 
       - name: Checkout or create builds branch
         run: |
-          git clone --depth 1 --branch builds https://github.com/$GITHUB_REPOSITORY.git $GITHUB_WORKSPACE/builds || \
-          (mkdir -p $GITHUB_WORKSPACE/builds && cd $GITHUB_WORKSPACE/builds && git init && git remote add origin https://github.com/$GITHUB_REPOSITORY.git && git checkout --orphan builds)
+          git clone --depth 1 --branch builds https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY.git $GITHUB_WORKSPACE/builds || \
+          (mkdir -p $GITHUB_WORKSPACE/builds && cd $GITHUB_WORKSPACE/builds && git init && git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY.git && git checkout --orphan builds)
 
       - name: Clean old builds
         run: rm $GITHUB_WORKSPACE/builds/*.cs3 || true
@@ -53,4 +53,4 @@ jobs:
           git config --local user.name "GitHub Actions"
           git add .
           git commit --amend -m "Build $GITHUB_SHA" || git commit -m "Build $GITHUB_SHA" || exit 0
-          git push --force origin builds
+          git push --force https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY.git builds
