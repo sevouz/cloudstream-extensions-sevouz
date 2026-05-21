@@ -2,7 +2,7 @@
 
 **Repository URL**: 
 ```
-https://raw.githubusercontent.com/sevouz/ottclones/builds/ottclones.json
+https://raw.githubusercontent.com/sevouz/cloudstream-extensions-sevouz/builds/cloudstream-extensions-sevouz.json
 ```
 
 ---

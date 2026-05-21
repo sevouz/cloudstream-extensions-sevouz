@@ -53,7 +53,7 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
-        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/sevouz/ottclones")
+        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/sevouz/cloudstream-extensions-sevouz")
         authors = listOf("sevouz")
     }
 
