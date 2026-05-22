@@ -8,7 +8,10 @@ import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
 
 class MegaPlayExtractor : ExtractorApi() {
     override val name = "MegaPlay"
@@ -29,22 +32,11 @@ class MegaPlayExtractor : ExtractorApi() {
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
             "Accept" to "*/*",
             "Accept-Language" to "en-US,en;q=0.5",
-            "Accept-Encoding" to "gzip, deflate, br, zstd",
             "Origin" to "https://rapid-cloud.co",
             "Referer" to "https://rapid-cloud.co/",
-            "Connection" to "keep-alive",
-            "Pragma" to "no-cache",
-            "Cache-Control" to "no-cache"
         )
 
         try {
-            val headers = mapOf(
-                "Accept" to "*/*",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to mainUrl
-            )
-
-            // The URL is like: https://megaplay.buzz/stream/s-2/169591/sub
             // Must send referer to avoid 410 error
             val embedHeaders = mapOf(
                 "Referer" to (referer ?: "https://anikoto.cz/"),
@@ -64,9 +56,14 @@ class MegaPlayExtractor : ExtractorApi() {
             Log.d(TAG, "Found data-id: $id")
 
             val apiUrl = "$mainUrl/stream/getSources?id=$id&id=$id"
+            val headers = mapOf(
+                "Accept" to "*/*",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to mainUrl
+            )
             val gson = Gson()
             val response = try {
-                val json = app.get(apiUrl, headers).text
+                val json = app.get(apiUrl, headers = headers).text
                 Log.d(TAG, "getSources response: $json")
                 gson.fromJson(json, MegaPlayResponse::class.java)
             } catch (e: Exception) {
@@ -82,7 +79,25 @@ class MegaPlayExtractor : ExtractorApi() {
             }
 
             Log.d(TAG, "Got m3u8: $m3u8")
-            M3u8Helper.generateM3u8(name, m3u8, mainUrl, headers = mainheaders).forEach(callback)
+
+            // Use both approaches for compatibility with stable and pre-release
+            try {
+                M3u8Helper.generateM3u8(name, m3u8, mainUrl, headers = mainheaders).forEach(callback)
+            } catch (e: Exception) {
+                Log.d(TAG, "generateM3u8 failed, using direct link: ${e.message}")
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        m3u8,
+                        ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "https://rapid-cloud.co/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mainheaders
+                    }
+                )
+            }
 
             response.tracks?.forEach { track ->
                 if (track.kind == "captions" || track.kind == "subtitles") {
@@ -120,30 +135,25 @@ class MegaPlayExtractor : ExtractorApi() {
             timeout = 15_000L
         )
 
-        val vttResolver = WebViewResolver(
-            interceptUrl = Regex("""\.vtt"""),
-            additionalUrls = listOf(Regex("""\.vtt""")),
-            script = jsToClickPlay,
-            scriptCallback = { result -> Log.d(TAG, "Subtitle JS Result: $result") },
-            useOkhttp = false,
-            timeout = 15_000L
-        )
-
         try {
-            // Try subtitles first
-            try {
-                val vttResponse = app.get(url = url, referer = mainUrl, interceptor = vttResolver)
-                val subtitleUrls = listOf(vttResponse.url)
-                    .filter { it.endsWith(".vtt") && !it.contains("thumbnails", ignoreCase = true) }
-                subtitleUrls.forEach { subUrl ->
-                    subtitleCallback(newSubtitleFile("English", subUrl))
-                }
-            } catch (e: Exception) {
-                Log.d(TAG, "No subtitles found: ${e.message}")
-            }
-
             val fallbackM3u8 = app.get(url = url, referer = mainUrl, interceptor = m3u8Resolver).url
-            M3u8Helper.generateM3u8(name, fallbackM3u8, mainUrl, headers = mainheaders).forEach(callback)
+
+            try {
+                M3u8Helper.generateM3u8(name, fallbackM3u8, mainUrl, headers = mainheaders).forEach(callback)
+            } catch (e: Exception) {
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        fallbackM3u8,
+                        ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mainheaders
+                    }
+                )
+            }
         } catch (ex: Exception) {
             Log.e(TAG, "Fallback also failed: ${ex.message}")
         }
