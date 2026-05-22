@@ -79,7 +79,13 @@ class MegaPlayExtractor : ExtractorApi() {
 
             Log.d(TAG, "Got m3u8: $m3u8")
 
-            // Provide direct M3U8 link - works on both stable and pre-release
+            // Provide direct M3U8 link with correct headers for segment fetching
+            val streamHeaders = mapOf(
+                "Referer" to "https://megaplay.buzz/",
+                "Origin" to "https://megaplay.buzz",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            )
+
             callback.invoke(
                 newExtractorLink(
                     name,
@@ -87,9 +93,9 @@ class MegaPlayExtractor : ExtractorApi() {
                     m3u8,
                     ExtractorLinkType.M3U8
                 ) {
-                    this.referer = "https://rapid-cloud.co/"
+                    this.referer = "https://megaplay.buzz/"
                     this.quality = Qualities.Unknown.value
-                    this.headers = mainheaders
+                    this.headers = streamHeaders
                 }
             )
 
@@ -139,9 +145,12 @@ class MegaPlayExtractor : ExtractorApi() {
                     fallbackM3u8,
                     ExtractorLinkType.M3U8
                 ) {
-                    this.referer = mainUrl
+                    this.referer = "https://megaplay.buzz/"
                     this.quality = Qualities.Unknown.value
-                    this.headers = mainheaders
+                    this.headers = mapOf(
+                        "Referer" to "https://megaplay.buzz/",
+                        "Origin" to "https://megaplay.buzz"
+                    )
                 }
             )
         } catch (ex: Exception) {
