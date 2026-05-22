@@ -12,7 +12,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
 class Animesuge : MainAPI() {
-    override var mainUrl = "https://animesuge.re"
+    override var mainUrl = "https://anikoto.cz"
     override var name = "AnimeSuge"
     override val hasMainPage = true
     override var lang = "en"
@@ -79,7 +79,7 @@ class Animesuge : MainAPI() {
 
         val title = document.selectFirst("div#w-info h1.title")?.text()?.trim()
             ?: document.selectFirst("meta[property=og:title]")?.attr("content")
-                ?.replace(Regex("Watch|Online|Free|-|AnimeSuge|Anime"), "")?.trim()
+                ?.replace(Regex("Watch|Online|Free|-|AnimeSuge|Anikoto|Anime"), "")?.trim()
             ?: "Unknown"
 
         val poster = document.selectFirst("div#w-info div.poster img")?.attr("src")
