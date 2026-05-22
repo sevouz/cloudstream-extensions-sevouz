@@ -4,9 +4,11 @@
 
 <br>
 
-<img src="https://img.shields.io/badge/Plugins-8-0078D4?style=for-the-badge&logo=puzzle-piece&logoColor=white" /> <img src="https://img.shields.io/badge/Status-Active-00C853?style=for-the-badge&logo=checkmarx&logoColor=white" /> <img src="https://img.shields.io/badge/Android-Platform-3DDC84?style=for-the-badge&logo=android&logoColor=white" /> <img src="https://img.shields.io/badge/Kotlin-Powered-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" />
+<img src="https://img.shields.io/badge/Plugins-9-0078D4?style=for-the-badge&logo=puzzle-piece&logoColor=white" /> <img src="https://img.shields.io/badge/Status-Active-00C853?style=for-the-badge&logo=checkmarx&logoColor=white" /> <img src="https://img.shields.io/badge/Android-Platform-3DDC84?style=for-the-badge&logo=android&logoColor=white" /> <img src="https://img.shields.io/badge/Kotlin-Powered-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" />
 
 <br>
+
+**The ultimate Cloudstream plugin collection — Movies, TV Shows & Anime.**
 
 </div>
 
@@ -20,7 +22,12 @@ Add this URL as a repository in **Cloudstream**:
 https://raw.githubusercontent.com/sevouz/cloudstream-extensions-sevouz/builds/cloudstream-extensions-sevouz.json
 ```
 
-> 💡 Open Cloudstream → Settings → Extensions → Add Repository → Paste the URL above
+### Steps:
+1. Open **Cloudstream** app
+2. Go to **Settings** → **Extensions**
+3. Tap **Add Repository**
+4. Paste the URL above
+5. Install the plugins you want
 
 ---
 
@@ -28,18 +35,30 @@ https://raw.githubusercontent.com/sevouz/cloudstream-extensions-sevouz/builds/cl
 
 <div align="center">
 
-| # | Plugin | Description |
-|:-:|--------|-------------|
-| 1 | `netclone` | Netflix, PrimeVideo, Disney+ Hotstar |
-| 2 | `netmirrorclone` | Netflix, PrimeVideo, Disney+ Hotstar |
-| 3 | `movieboxinclone` | Multi Language Movies & Series |
-| 4 | `multimoviesclone` | Indian Multi-language HD Provider |
-| 5 | `animepaheclone` | Animes (SUB/DUB) |
-| 6 | `animesaltclone` | Anime & Cartoon in Hindi |
-| 7 | `animedekhoclone` | AnimeDekho, OnePace & HindiSubAnime |
-| 8 | `anizoneclone` | Anizone.to Anime Streams |
+| # | Plugin | Content | Language |
+|:-:|--------|---------|:--------:|
+| 🎬 | **netclone** | Netflix, PrimeVideo, Disney+ Hotstar | Tamil |
+| 🎬 | **netmirrorclone** | Netflix, PrimeVideo, Disney+ Hotstar | Hindi |
+| 🎬 | **movieboxinclone** | Multi Language Movies & Series | Tamil |
+| 🎬 | **multimoviesclone** | Indian Multi-language HD Provider | Hindi |
+| 🎌 | **anikotoclone** | Anime (SUB/DUB) — HD Streaming | English |
+| 🎌 | **animepaheclone** | Anime (SUB/DUB) | English |
+| 🎌 | **animesaltclone** | Anime & Cartoon in Hindi | Hindi |
+| 🎌 | **animedekhoclone** | AnimeDekho, OnePace, HindiSubAnime | Hindi |
+| 🎌 | **anizoneclone** | Anizone.to Anime Streams | English |
 
 </div>
+
+---
+
+## ✨ Features
+
+- ✅ Works on **Cloudstream Stable & Pre-release**
+- ✅ **SUB & DUB** support for anime plugins
+- ✅ HD/FHD quality streams
+- ✅ Auto-updated via GitHub Actions
+- ✅ No ads, no tracking
+- ✅ Multi-language support (English, Hindi, Tamil)
 
 ---
 
