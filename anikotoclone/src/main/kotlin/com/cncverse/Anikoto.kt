@@ -216,39 +216,87 @@ class Anikoto : MainAPI() {
         val serverDoc = Jsoup.parse(serverResult.result ?: return false)
 
         // Step 2: For each server, get the embed URL
-        val targetType = if (isDub) "dub" else "sub"
-        var serverItems = serverDoc.select("div.type[data-type=$targetType] li[data-link-id]")
+        // Load both sub and dub servers to give user all options
+        val typeLabels = mutableListOf<Pair<String, org.jsoup.select.Elements>>()
 
-        if (serverItems.isEmpty()) {
-            // Try all servers if specific type not found
-            serverItems = serverDoc.select("li[data-link-id]")
+        val subServers = serverDoc.select("div.type[data-type=sub] li[data-link-id]")
+        val dubServers = serverDoc.select("div.type[data-type=dub] li[data-link-id]")
+
+        if (isDub) {
+            // User selected dub episode - prioritize dub but also show sub
+            if (dubServers.isNotEmpty()) typeLabels.add("Dub" to dubServers)
+            if (subServers.isNotEmpty()) typeLabels.add("Sub" to subServers)
+        } else {
+            // User selected sub episode - prioritize sub but also show dub
+            if (subServers.isNotEmpty()) typeLabels.add("Sub" to subServers)
+            if (dubServers.isNotEmpty()) typeLabels.add("Dub" to dubServers)
         }
 
-        serverItems.forEach { server ->
-            val linkId = server.attr("data-link-id")
-            val serverName = server.text().trim()
+        // Fallback: if neither sub nor dub sections found, grab all servers
+        if (typeLabels.isEmpty()) {
+            val allServers = serverDoc.select("li[data-link-id]")
+            if (allServers.isNotEmpty()) typeLabels.add("" to allServers)
+        }
 
-            if (linkId.isBlank()) return@forEach
+        for ((audioType, serverItems) in typeLabels) {
+            val serverList = serverItems.toList()
+            for (server in serverList) {
+                val linkId = server.attr("data-link-id")
+                val serverName = server.text().trim()
 
-            try {
-                // Step 3: Get actual embed URL
-                val embedResponse = app.get(
-                    "$mainUrl/ajax/server?get=$linkId",
-                    headers = ajaxHeaders
-                ).text
-                val embedResult = parseJson<ServerGetResponse>(embedResponse)
-                val embedUrl = embedResult.result?.url ?: return@forEach
+                if (linkId.isBlank()) continue
 
-                Log.d(TAG, "Server: $serverName, Embed: $embedUrl")
+                try {
+                    // Step 3: Get actual embed URL
+                    val embedResponse = app.get(
+                        "$mainUrl/ajax/server?get=$linkId",
+                        headers = ajaxHeaders
+                    ).text
+                    val embedResult = parseJson<ServerGetResponse>(embedResponse)
+                    val embedUrl = embedResult.result?.url ?: continue
 
-                // Step 4: Extract video from megaplay.buzz
-                if (embedUrl.contains("megaplay.buzz")) {
-                    MegaPlayExtractor().getUrl(embedUrl, "$mainUrl/", subtitleCallback, callback)
-                } else {
-                    loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
+                    // Build a descriptive source name: "ServerName (Sub)" or "ServerName (Dub)"
+                    val sourceName = if (audioType.isNotBlank()) {
+                        "$serverName ($audioType)"
+                    } else {
+                        serverName
+                    }
+
+                    Log.d(TAG, "Server: $sourceName, Embed: $embedUrl")
+
+                    // Step 4: Extract video - collect links and re-emit with proper names
+                    val collectedLinks = mutableListOf<ExtractorLink>()
+                    val linkCollector: (ExtractorLink) -> Unit = { link -> collectedLinks.add(link) }
+
+                    if (embedUrl.contains("megaplay.buzz")) {
+                        MegaPlayExtractor().getUrl(embedUrl, "$mainUrl/", subtitleCallback, linkCollector)
+                    } else {
+                        loadExtractor(embedUrl, mainUrl, subtitleCallback, linkCollector)
+                    }
+
+                    // Re-emit collected links with proper source names
+                    for (link in collectedLinks) {
+                        val displayName = if (audioType.isNotBlank()) {
+                            "${link.source} ($audioType)"
+                        } else {
+                            link.source
+                        }
+                        callback.invoke(
+                            newExtractorLink(
+                                displayName,
+                                sourceName,
+                                link.url,
+                                link.type
+                            ) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error with server $serverName: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error with server $serverName: ${e.message}")
             }
         }
 
