@@ -39,9 +39,12 @@ If these plugins save you time and you want to say thanks, a small donation keep
 
 ### 🇮🇳 UPI (India)
 
+[![Donate via UPI](https://img.shields.io/badge/Donate-UPI-0078D4?style=for-the-badge&logo=google-pay&logoColor=white)](upi://pay?pa=7001811103@ptsbi&pn=Sevouz&cu=INR)
+
 **UPI ID:** `7001811103@ptsbi`
 
-> Scan or pay directly via GPay, PhonePe, Paytm, or any UPI app.
+> 📱 Android — tap the button above to open GPay / PhonePe / Paytm directly.  
+> 💻 PC — copy the UPI ID above and paste it in any UPI app.
 
 <br>
 
