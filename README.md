@@ -31,6 +31,26 @@ https://raw.githubusercontent.com/sevouz/cloudstream-extensions-sevouz/builds/cl
 
 ---
 
+## ☕ Support the Developer
+
+If these plugins save you time and you want to say thanks, a small donation keeps the project alive and motivates further development.
+
+<div align="center">
+
+### 🇮🇳 UPI (India)
+
+**UPI ID:** `7001811103@ptsbi`
+
+> Scan or pay directly via GPay, PhonePe, Paytm, or any UPI app.
+
+<br>
+
+*Every contribution, big or small, is genuinely appreciated. Thank you!* 🙏
+
+</div>
+
+---
+
 ## 📦 Available Plugins
 
 <div align="center">
@@ -92,25 +112,5 @@ https://raw.githubusercontent.com/sevouz/cloudstream-extensions-sevouz/builds/cl
 <img src="https://img.shields.io/github/stars/sevouz/cloudstream-extensions-sevouz?style=social" />
 
 **If you find this useful, consider giving it a ⭐**
-
-</div>
-
----
-
-## ☕ Support the Developer
-
-If these plugins save you time and you want to say thanks, a small donation keeps the project alive and motivates further development.
-
-<div align="center">
-
-### 🇮🇳 UPI (India)
-
-**UPI ID:** `7001811103@ptsbi`
-
-> Scan or pay directly via GPay, PhonePe, Paytm, or any UPI app.
-
-<br>
-
-*Every contribution, big or small, is genuinely appreciated. Thank you!* 🙏
 
 </div>
