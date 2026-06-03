@@ -37,14 +37,33 @@ If these plugins save you time and you want to say thanks, a small donation keep
 
 <div align="center">
 
-### 🇮🇳 UPI (India)
+### 🇮🇳 Indian Users — Pay via UPI
 
 <img src="assets/upi-qr.png" width="200" alt="UPI QR Code" />
 
 **UPI ID:** `7001811103@ptsbi`
 
-> 📱 Scan the QR with GPay, PhonePe, Paytm, or any UPI app.  
-> 💻 PC users — copy the UPI ID above and paste it in any UPI app.
+**📱 On Mobile:**
+1. Open GPay, PhonePe, Paytm, or any UPI app
+2. Tap **Scan QR** and scan the code above
+3. Enter the amount you wish to donate and pay
+
+**💻 On PC:**
+1. Copy the UPI ID above
+2. Open any UPI app on your phone
+3. Go to **Send Money** → **Enter UPI ID**
+4. Paste `7001811103@ptsbi` and pay
+
+---
+
+### 🌍 International Users — Sponsor via GitHub
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?style=for-the-badge&logo=github-sponsors&logoColor=white)](https://github.com/sponsors/sevouz)
+
+**Steps:**
+1. Click the **Sponsor** button above
+2. Sign in to your GitHub account
+3. Choose an amount and pay with your credit/debit card
 
 <br>
 
