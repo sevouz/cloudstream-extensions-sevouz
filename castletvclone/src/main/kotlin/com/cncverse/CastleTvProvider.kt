@@ -206,11 +206,12 @@ class CastleTvProvider : MainAPI() {
         showTelegramPopup()
         return try {
             val securityKey = getSecurityKey() ?: return newHomePageResponse(emptyList())
-            val url = "$mainUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&lang=en-US&locationId=1001&mode=1&packageName=com.external.castle&page=$page&size=17"
+            val url = "$mainUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=1001&mode=1&packageName=com.external.castle&page=$page&size=17"
+            val responseText = app.get(url).text
             val apiResponse = try {
-                mapper.readValue<CastleApiResponse>(app.get(url).text)
+                mapper.readValue<CastleApiResponse>(responseText)
             } catch (e: Exception) {
-                CastleApiResponse(200, "OK", app.get(url).text)
+                CastleApiResponse(200, "OK", responseText)
             }
             val encryptedData = apiResponse.data ?: return newHomePageResponse(emptyList())
             val decryptedJson = decryptData(encryptedData, securityKey) ?: return newHomePageResponse(emptyList())
@@ -245,8 +246,10 @@ class CastleTvProvider : MainAPI() {
         return try {
             if (query.isBlank()) return emptyList()
             val securityKey = getSecurityKey() ?: return emptyList()
-            val searchUrl = "$mainUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&keyword=${java.net.URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=1&size=30"
-            val decryptedJson = decryptData(app.get(searchUrl).text, securityKey) ?: return emptyList()
+            val searchUrl = "$mainUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&clientType=1&keyword=${java.net.URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=1&size=30"
+            val responseText = app.get(searchUrl).text
+            if (responseText.isBlank()) return emptyList()
+            val decryptedJson = decryptData(responseText, securityKey) ?: return emptyList()
             val searchData = mapper.readValue<SearchApiResponse>(decryptedJson).data
 
             searchData.rows?.mapNotNull { item ->
@@ -273,7 +276,7 @@ class CastleTvProvider : MainAPI() {
         return try {
             val movieId = url.substringAfterLast('/')
             val securityKey = getSecurityKey() ?: return null
-            val detailsUrl = "$mainUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
+            val detailsUrl = "$mainUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
             val decryptedJson = decryptData(app.get(detailsUrl).text, securityKey) ?: return null
             val details = mapper.readValue<MovieDetailsResponse>(decryptedJson).data
 
@@ -363,7 +366,7 @@ class CastleTvProvider : MainAPI() {
             val episodeId = parts[1]
 
             val securityKey = getSecurityKey() ?: return false
-            val detailsUrl = "$mainUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
+            val detailsUrl = "$mainUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
             val detailsDecrypted = decryptData(app.get(detailsUrl).text, securityKey) ?: return false
             val details = mapper.readValue<MovieDetailsResponse>(detailsDecrypted).data
             val episode = details.episodes?.find { it.id?.toString() == episodeId } ?: return false
