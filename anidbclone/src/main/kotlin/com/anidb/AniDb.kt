@@ -7,12 +7,10 @@ import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.ShowStatus
 import com.lagradost.cloudstream3.SearchResponseList
-import com.lagradost.cloudstream3.Score
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.addEpisodes
@@ -23,7 +21,7 @@ import com.lagradost.cloudstream3.newAnimeSearchResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.toNewSearchResponseList
-import com.lagradost.cloudstream3.addDate
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
@@ -52,13 +50,8 @@ class AniDb : MainAPI() {
             val title = item.attr("title")
             val url = item.attr("href")
             val posterUrl = item.selectFirst("img")?.attr("src")
-            val ratingText = item.selectFirst("span.badge-gray")?.ownText()?.trim()
-            val rating = ratingText?.replace(Regex("[^0-9.]"), "")?.toDoubleOrNull()
             results += newAnimeSearchResponse(title, url) {
                 this.posterUrl = posterUrl
-                if (rating != null) {
-                    this.score = Score.from10(rating.toString())
-                }
             }
         }
         return results
@@ -89,11 +82,10 @@ class AniDb : MainAPI() {
 
         val tags = doc.select("a.filter-chip").map { it.text() }
         val year = doc.selectFirst("a[href*=&year=]")?.text()?.split(" ")?.lastOrNull()?.toIntOrNull()
-        val ratingText = doc.select("span.badge-gray").firstOrNull { it.text().contains(Regex("[0-9]")) }?.ownText()?.trim()
-        val rating = ratingText?.replace(Regex("[^0-9.]"), "")?.toDoubleOrNull()
 
         val episodesUrl = "$mainUrl/api/frontend/anime/$siteId/episodes"
-        val epResponse = app.get(episodesUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<EpisodesResponse>()
+        val epResponse = app.get(episodesUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest"))
+            .parsedSafe<EpisodesResponse>()
         val episodesList = epResponse?.episodes ?: emptyList()
 
         val firstEpId = episodesList.firstOrNull()?.id
@@ -102,24 +94,32 @@ class AniDb : MainAPI() {
 
         if (firstEpId != null) {
             val langUrl = "$mainUrl/api/frontend/episode/$firstEpId/languages"
-            val langResponse = app.get(langUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<LanguagesResponse>()
+            val langResponse = app.get(langUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest"))
+                .parsedSafe<LanguagesResponse>()
             val langs = langResponse?.languages ?: emptyList()
-            hasSub = langs.isEmpty() || langs.any { it.code?.lowercase() in listOf("jpn", "ja", "japanese") || it.name?.lowercase() in listOf("jpn", "ja", "japanese") }
-            hasDub = langs.any { it.code?.lowercase() in listOf("eng", "en", "english") || it.name?.lowercase() in listOf("eng", "en", "english") }
+            hasSub = langs.isEmpty() || langs.any {
+                it.code?.lowercase() in listOf("jpn", "ja", "japanese") ||
+                it.name?.lowercase() in listOf("jpn", "ja", "japanese")
+            }
+            hasDub = langs.any {
+                it.code?.lowercase() in listOf("eng", "en", "english") ||
+                it.name?.lowercase() in listOf("eng", "en", "english")
+            }
         }
 
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
-        val malId = doc.selectFirst("a[href*=myanimelist.net/anime/]")?.attr("href")?.substringAfter("anime/")?.substringBefore("/")?.toIntOrNull()
-        val anilistId = doc.selectFirst("a[href*=anilist.co/anime/]")?.attr("href")?.substringAfter("anime/")?.substringBefore("/")?.toIntOrNull()
+        val malId = doc.selectFirst("a[href*=myanimelist.net/anime/]")
+            ?.attr("href")?.substringAfter("anime/")?.substringBefore("/")?.toIntOrNull()
+        val anilistId = doc.selectFirst("a[href*=anilist.co/anime/]")
+            ?.attr("href")?.substringAfter("anime/")?.substringBefore("/")?.toIntOrNull()
 
-        val syncMetaData = if (anilistId != null) {
-            app.get("https://api.ani.zip/mappings?anilist_id=$anilistId").text
-        } else if (malId != null) {
-            app.get("https://api.ani.zip/mappings?mal_id=$malId").text
-        } else null
-
+        val syncMetaData = when {
+            anilistId != null -> app.get("https://api.ani.zip/mappings?anilist_id=$anilistId").text
+            malId != null -> app.get("https://api.ani.zip/mappings?mal_id=$malId").text
+            else -> null
+        }
         val animeMetaData = syncMetaData?.let { parseAnimeData(it) }
 
         val isMovie = doc.selectFirst("a[class*=badge-orange][href*=/browse?type=Movie]") != null
@@ -128,12 +128,13 @@ class AniDb : MainAPI() {
             val num = index + 1
             val metaEp = animeMetaData?.episodes?.get(num.toString())
 
-            val epName = metaEp?.title?.get("en") ?: metaEp?.title?.get("x-jat") ?: metaEp?.title?.get("ja") ?: "Episode $num"
+            val epName = metaEp?.title?.get("en")
+                ?: metaEp?.title?.get("x-jat")
+                ?: metaEp?.title?.get("ja")
+                ?: "Episode $num"
             val epDesc = metaEp?.overview
             val epPoster = metaEp?.image
-            val epRating = metaEp?.rating?.let { Score.from10(it) }
             val epRuntime = metaEp?.runtime
-            val epAirDate = metaEp?.airDateUtc
 
             if (isMovie) {
                 subEpisodes.add(newEpisode("${ep.id}|$slug|movie") {
@@ -141,9 +142,7 @@ class AniDb : MainAPI() {
                     this.name = epName
                     this.description = epDesc
                     this.posterUrl = epPoster
-                    if (epRating != null) this.score = epRating
                     this.runTime = epRuntime
-                    this.addDate(epAirDate)
                 })
             } else {
                 if (hasSub) {
@@ -152,9 +151,7 @@ class AniDb : MainAPI() {
                         this.name = epName
                         this.description = epDesc
                         this.posterUrl = epPoster
-                        if (epRating != null) this.score = epRating
                         this.runTime = epRuntime
-                        this.addDate(epAirDate)
                     })
                 }
                 if (hasDub) {
@@ -163,17 +160,13 @@ class AniDb : MainAPI() {
                         this.name = epName
                         this.description = epDesc
                         this.posterUrl = epPoster
-                        if (epRating != null) this.score = epRating
                         this.runTime = epRuntime
-                        this.addDate(epAirDate)
                     })
                 }
             }
         }
 
         val tvType = if (isMovie) TvType.AnimeMovie else TvType.Anime
-
-        val trailerUrl = doc.selectFirst("a[href*=youtube.com/watch]")?.attr("href")
 
         val statusText = doc.selectFirst("a[class*=badge][href*=/browse?status=]")?.text()
         val showStatus = when (statusText) {
@@ -182,16 +175,17 @@ class AniDb : MainAPI() {
             else -> null
         }
 
-        val durationText = doc.select("div.flex.flex-wrap.gap-x-6 span").firstOrNull { it.text().contains("m") || it.text().contains("h") }?.text()
+        val durationText = doc.select("div.flex.flex-wrap.gap-x-6 span")
+            .firstOrNull { it.text().contains("m") || it.text().contains("h") }?.text()
         val duration = durationText?.let {
-            if (it.contains("h") && it.contains("m")) {
-                val h = it.substringBefore("h").toIntOrNull() ?: 0
-                val m = it.substringAfter("h").substringBefore("m").trim().toIntOrNull() ?: 0
-                h * 60 + m
-            } else if (it.contains("h")) {
-                (it.substringBefore("h").toIntOrNull() ?: 0) * 60
-            } else {
-                it.substringBefore("m").trim().toIntOrNull()
+            when {
+                it.contains("h") && it.contains("m") -> {
+                    val h = it.substringBefore("h").toIntOrNull() ?: 0
+                    val m = it.substringAfter("h").substringBefore("m").trim().toIntOrNull() ?: 0
+                    h * 60 + m
+                }
+                it.contains("h") -> (it.substringBefore("h").toIntOrNull() ?: 0) * 60
+                else -> it.substringBefore("m").trim().toIntOrNull()
             }
         }
 
@@ -202,16 +196,10 @@ class AniDb : MainAPI() {
             this.tags = tags
             this.showStatus = showStatus
             this.duration = duration
-            if (rating != null) {
-                this.score = Score.from10(rating.toString())
-            }
             addMalId(malId)
             addAniListId(anilistId)
-            addTrailer(trailerUrl)
-            if (isMovie) {
-                addEpisodes(DubStatus.Subbed, subEpisodes)
-            } else {
-                addEpisodes(DubStatus.Subbed, subEpisodes)
+            addEpisodes(DubStatus.Subbed, subEpisodes)
+            if (!isMovie && dubEpisodes.isNotEmpty()) {
                 addEpisodes(DubStatus.Dubbed, dubEpisodes)
             }
         }
@@ -230,14 +218,21 @@ class AniDb : MainAPI() {
         val audio = parts.getOrNull(2) ?: "sub"
 
         val langUrl = "$mainUrl/api/frontend/episode/$episodeId/languages"
-        val langResponse = app.get(langUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to "$mainUrl/anime/$slug")).parsedSafe<LanguagesResponse>()
+        val langResponse = app.get(
+            langUrl,
+            headers = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to "$mainUrl/anime/$slug")
+        ).parsedSafe<LanguagesResponse>()
 
         val langs = langResponse?.languages ?: emptyList()
         val langsToExtract = if (audio == "movie") {
             langs
         } else {
-            val preferredCodes = if (audio == "sub") listOf("jpn", "ja", "japanese") else listOf("eng", "en", "english")
-            listOfNotNull(langs.find { it.code?.lowercase() in preferredCodes } ?: langs.find { it.name?.lowercase() in preferredCodes })
+            val preferredCodes = if (audio == "sub")
+                listOf("jpn", "ja", "japanese") else listOf("eng", "en", "english")
+            listOfNotNull(
+                langs.find { it.code?.lowercase() in preferredCodes }
+                    ?: langs.find { it.name?.lowercase() in preferredCodes }
+            )
         }
 
         val hlsRegex = listOf(
@@ -262,11 +257,7 @@ class AniDb : MainAPI() {
 
             if (hlsUrl != null) {
                 val sourceName = if (audio == "movie") "$name - ${language.name ?: "Unknown"}" else name
-                generateM3u8(
-                    sourceName,
-                    hlsUrl,
-                    "$mainUrl/"
-                ).forEach(callback)
+                generateM3u8(sourceName, hlsUrl, "$mainUrl/").forEach(callback)
             } else {
                 loadExtractor(embedUrl, "$mainUrl/", subtitleCallback, callback)
             }
