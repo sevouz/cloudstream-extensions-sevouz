@@ -1,24 +1,20 @@
 package com.anidb
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 
 fun parseAnimeData(jsonString: String): MetaAnimeData? {
     return try {
-        val objectMapper = ObjectMapper()
-        objectMapper.readValue(jsonString, MetaAnimeData::class.java)
+        parseJson<MetaAnimeData>(jsonString)
     } catch (_: Exception) {
         null
     }
 }
 
-@JsonIgnoreProperties(ignoreUnknown = true)
 data class ImageData(
     val coverType: String? = null,
     val url: String? = null
 )
 
-@JsonIgnoreProperties(ignoreUnknown = true)
 data class MetaEpisode(
     val episode: String? = null,
     val airdate: String? = null,
@@ -32,7 +28,6 @@ data class MetaEpisode(
     val finaleType: String? = null
 )
 
-@JsonIgnoreProperties(ignoreUnknown = true)
 data class MetaAnimeData(
     val titles: Map<String, String?>? = null,
     val images: List<ImageData>? = null,
