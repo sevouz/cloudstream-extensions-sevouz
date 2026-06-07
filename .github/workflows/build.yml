@@ -39,6 +39,10 @@ jobs:
         uses: android-actions/setup-android@v3.2.2
 
       - name: Build Plugins
+        env:
+          CASTLE_SUFFIX: ${{ secrets.CASTLE_SUFFIX }}
+          MOVIEBOX_SECRET_KEY_DEFAULT: ${{ secrets.MOVIEBOX_SECRET_KEY_DEFAULT }}
+          MOVIEBOX_SECRET_KEY_ALT: ${{ secrets.MOVIEBOX_SECRET_KEY_ALT }}
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
