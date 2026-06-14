@@ -179,11 +179,12 @@ class AnimeSuge : MainAPI() {
     ): Boolean {
         val parts = data.split("|")
         if (parts.size < 3) return false
+        val animeId = parts[0]
         val dataIds = parts[1]
         val isDub = parts.size > 3 && parts[3] == "dub"
         val ajaxHeaders = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to mainUrl)
 
-        val serverResponse = app.get("$mainUrl/ajax/server/list?servers=$dataIds", headers = ajaxHeaders).text
+        val serverResponse = app.get("$mainUrl/ajax/server/list?anime=$animeId&servers=$dataIds", headers = ajaxHeaders).text
         val serverResult = parseJson<AjaxResponse>(serverResponse)
         val serverDoc = Jsoup.parse(serverResult.result ?: return false)
 
