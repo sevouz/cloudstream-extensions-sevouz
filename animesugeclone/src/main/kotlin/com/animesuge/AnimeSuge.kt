@@ -33,20 +33,33 @@ class AnimeSuge : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = "${request.data}$page"
         val document = app.get(url).document
-        val home = document.select("div#list-items div.item").mapNotNull { it.toSearchResult() }
+        val home = document.select("div.item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, home, hasNext = home.isNotEmpty())
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val nameTag = this.selectFirst("a.name.d-title") ?: return null
+        // Title from div.name a
+        val nameTag = this.selectFirst("div.name a") ?: return null
         val title = nameTag.text().trim().ifBlank { return null }
-        val href = fixUrl(nameTag.attr("href"))
-        val cleanHref = href.replace(Regex("/ep-\\d+$"), "")
-        val posterUrl = this.selectFirst("div.ani.poster img")?.attr("src")
-            ?: this.selectFirst("img")?.attr("src")
-        val subCount = this.selectFirst("span.ep-status.sub span")?.text()?.trim()?.toIntOrNull()
-        val dubCount = this.selectFirst("span.ep-status.dub span")?.text()?.trim()?.toIntOrNull()
-        return newAnimeSearchResponse(title, cleanHref, TvType.Anime) {
+
+        // URL from the poster anchor (or name anchor), strip /ep-X suffix
+        val href = fixUrl(
+            this.selectFirst("a.poster")?.attr("href")
+                ?: nameTag.attr("href")
+        ).replace(Regex("/ep-\\d+$"), "")
+
+        // Poster uses data-src (lazy loaded)
+        val posterUrl = this.selectFirst("a.poster img")?.let {
+            it.attr("data-src").ifBlank { it.attr("src") }
+        }
+
+        // Sub/dub counts from span.sub and span.dub text (contains icon + number)
+        val subText = this.selectFirst("span.sub")?.text()?.trim()
+        val dubText = this.selectFirst("span.dub")?.text()?.trim()
+        val subCount = subText?.filter { it.isDigit() }?.toIntOrNull()
+        val dubCount = dubText?.filter { it.isDigit() }?.toIntOrNull()
+
+        return newAnimeSearchResponse(title, href, TvType.Anime) {
             this.posterUrl = posterUrl
             addDubStatus(
                 dubExist = dubCount != null && dubCount > 0,
@@ -59,20 +72,31 @@ class AnimeSuge : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val document = app.get("$mainUrl/filter?keyword=$query").document
-        return document.select("div#list-items div.item").mapNotNull { it.toSearchResult() }
+        return document.select("div.item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-        val animeId = document.selectFirst("div#watch-main")?.attr("data-id") ?: ""
-        val title = document.selectFirst("div#w-info h1.title")?.text()?.trim()
-            ?: document.selectFirst("meta[property=og:title]")?.attr("content")
-                ?.replace(Regex("Watch|Online|Free|-|AnimeSuge|Anime"), "")?.trim()
+        val animeId = document.selectFirst("[data-id]")?.attr("data-id") ?: ""
+
+        // Title from og:title meta, strip site suffix
+        val title = document.selectFirst("meta[property=og:title]")?.attr("content")
+            ?.replace(Regex("\\s*[–-].*AnimeSuge.*", RegexOption.IGNORE_CASE), "")
+            ?.trim()
+            ?: document.title().replace(Regex("\\s*[–-].*", RegexOption.IGNORE_CASE), "").trim()
             ?: "Unknown"
-        val poster = document.selectFirst("div#w-info div.poster img")?.attr("src")
-            ?: document.selectFirst("meta[property=og:image]")?.attr("content")
-        val description = document.selectFirst("div#w-info div.synopsis div.content")?.text()?.trim()
+
+        // Poster from og:image
+        val poster = document.selectFirst("meta[property=og:image]")?.attr("content")
+
+        // Description from short description block
+        val description = document.selectFirst("div.description div.short div")?.text()?.trim()
+            ?.replace("more+", "")?.trim()
+            ?: document.selectFirst("meta[name=description]")?.attr("content")
+
+        // Japanese name
         val japName = document.selectFirst("h1.title.d-title")?.attr("data-jp")
+            ?: document.selectFirst("h2.title.d-title")?.attr("data-jp")
 
         val ajaxHeaders = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to url)
         val subEpisodes = mutableListOf<Episode>()
@@ -108,17 +132,20 @@ class AnimeSuge : MainAPI() {
         var status: ShowStatus? = null
         val tags = mutableListOf<String>()
 
-        document.select("div#w-info div.bmeta div.meta div").forEach { item ->
-            val text = item.text()
+        // Info from div.meta rows
+        document.select("div.meta > div").forEach { item ->
+            val label = item.selectFirst("div")?.text()?.trim() ?: ""
+            val value = item.selectFirst("span")?.text()?.trim() ?: ""
             when {
-                text.startsWith("Premiered:") || text.startsWith("Aired:") ->
-                    year = Regex("(\\d{4})").find(text)?.groupValues?.get(1)?.toIntOrNull()
-                text.startsWith("Status:") -> status = when {
-                    text.contains("Airing", true) -> ShowStatus.Ongoing
-                    text.contains("Finished", true) -> ShowStatus.Completed
+                label.startsWith("Premiered") || label.startsWith("Aired") ->
+                    year = Regex("(\\d{4})").find(value)?.groupValues?.get(1)?.toIntOrNull()
+                label.startsWith("Status") -> status = when {
+                    value.contains("Airing", true) -> ShowStatus.Ongoing
+                    value.contains("Finished", true) || value.contains("Completed", true) -> ShowStatus.Completed
                     else -> null
                 }
-                text.startsWith("Genre") -> tags.addAll(item.select("a").map { it.text().trim() })
+                label.startsWith("Genre") ->
+                    tags.addAll(item.select("a").map { it.text().trim() })
             }
         }
 
