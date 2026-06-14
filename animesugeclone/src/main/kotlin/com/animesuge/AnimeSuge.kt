@@ -108,9 +108,9 @@ class AnimeSuge : MainAPI() {
                 val epResult = parseJson<AjaxResponse>(epResponse)
                 val epDoc = Jsoup.parse(epResult.result ?: "")
 
-                epDoc.select("ul.ep-range li a").forEach { epLink ->
-                    val epNum = epLink.attr("data-num").toIntOrNull() ?: return@forEach
-                    val epTitle = epLink.selectFirst("span.d-title")?.text() ?: "Episode $epNum"
+                epDoc.select("div.range a[data-num]").forEach { epLink ->
+                    val epNum = epLink.text().trim().toIntOrNull() ?: return@forEach
+                    val epTitle = epLink.attr("title").ifBlank { "Episode $epNum" }
                     val dataIds = epLink.attr("data-ids")
                     val hasSub = epLink.attr("data-sub") == "1"
                     val hasDub = epLink.attr("data-dub") == "1"
@@ -187,8 +187,8 @@ class AnimeSuge : MainAPI() {
         val serverResult = parseJson<AjaxResponse>(serverResponse)
         val serverDoc = Jsoup.parse(serverResult.result ?: return false)
 
-        val subServers = serverDoc.select("div.type[data-type=sub] li[data-link-id]")
-        val dubServers = serverDoc.select("div.type[data-type=dub] li[data-link-id]")
+        val subServers = serverDoc.select("div.server-type[data-type=sub] div.server[data-link-id]")
+        val dubServers = serverDoc.select("div.server-type[data-type=dub] div.server[data-link-id]")
         val typeLabels = mutableListOf<Pair<String, org.jsoup.select.Elements>>()
 
         if (isDub) {
@@ -199,7 +199,7 @@ class AnimeSuge : MainAPI() {
             if (dubServers.isNotEmpty()) typeLabels.add("Dub" to dubServers)
         }
         if (typeLabels.isEmpty()) {
-            val all = serverDoc.select("li[data-link-id]")
+            val all = serverDoc.select("div.server[data-link-id]")
             if (all.isNotEmpty()) typeLabels.add("" to all)
         }
 
