@@ -207,6 +207,7 @@ class AnimeSuge : MainAPI() {
             for (server in serverItems) {
                 val linkId = server.attr("data-link-id").ifBlank { continue }
                 val serverName = server.text().trim()
+                if (serverName.contains("Vidwish", ignoreCase = true)) continue
                 try {
                     val embedResponse = app.get("$mainUrl/ajax/server?get=$linkId", headers = ajaxHeaders).text
                     val embedResult = parseJson<ServerGetResponse>(embedResponse)
