@@ -214,7 +214,11 @@ class AnimeSuge : MainAPI() {
                     val sourceName = if (audioType.isNotBlank()) "$serverName ($audioType)" else serverName
 
                     val collected = mutableListOf<ExtractorLink>()
-                    loadExtractor(embedUrl, mainUrl, subtitleCallback) { collected.add(it) }
+                    if (embedUrl.contains("megaplay.buzz") || embedUrl.contains("vidtube.site")) {
+                        MegaPlayExtractor().getUrl(embedUrl, mainUrl, subtitleCallback) { collected.add(it) }
+                    } else {
+                        loadExtractor(embedUrl, mainUrl, subtitleCallback) { collected.add(it) }
+                    }
 
                     for (link in collected) {
                         callback.invoke(newExtractorLink(
