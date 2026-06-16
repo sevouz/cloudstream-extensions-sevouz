@@ -364,41 +364,44 @@ class CastleTvProvider : MainAPI() {
 
             val hasIndividualVideo = availableTracks.any { it.existIndividualVideo == true }
             if (!hasIndividualVideo && availableTracks.isNotEmpty()) {
-                val firstTrack = availableTracks.first()
-                val languageId = firstTrack.languageId ?: return false
-                val allLanguageNames = availableTracks.mapNotNull { it.languageName ?: it.abbreviate }.joinToString(", ")
+                // All language tracks share the same M3U8 (audio streams are embedded).
+                // We create one ExtractorLink per language+resolution so the user can
+                // pick both quality and audio language from the CloudStream source selector.
+                for (track in availableTracks) {
+                    val languageId = track.languageId ?: continue
+                    val languageName = track.languageName ?: track.abbreviate ?: "Unknown"
+                    for (resolution in resolutions) {
+                        try {
+                            val videoUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
+                            val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","languageId":"$languageId","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
+                            val videoResponse = app.post(url = videoUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                            val decryptedJson = decryptData(videoResponse.text, securityKey) ?: continue
+                            val videoData = mapper.readValue<VideoResponse>(decryptedJson).data
 
-                for (resolution in resolutions) {
-                    try {
-                        val videoUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
-                        val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
-                        val videoResponse = app.post(url = videoUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                        val decryptedJson = decryptData(videoResponse.text, securityKey) ?: continue
-                        val videoData = mapper.readValue<VideoResponse>(decryptedJson).data
-
-                        if (videoData.videoUrl != null && videoData.permissionDenied != true) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = if (videoData.videoUrl.contains("preview", ignoreCase = true))
-                                        "$name - $allLanguageNames (preview) Requires Castle TV Premium"
-                                    else "$name - $allLanguageNames",
-                                    url = videoData.videoUrl,
-                                    type = ExtractorLinkType.M3U8
-                                ) {
-                                    this.headers = mapOf("Referer" to mainUrl)
-                                    this.quality = when (resolution) { 3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240 }
+                            if (videoData.videoUrl != null && videoData.permissionDenied != true) {
+                                callback.invoke(
+                                    newExtractorLink(
+                                        source = name,
+                                        name = if (videoData.videoUrl.contains("preview", ignoreCase = true))
+                                            "$name - $languageName (preview) Requires Castle TV Premium"
+                                        else "$name - $languageName",
+                                        url = videoData.videoUrl,
+                                        type = ExtractorLinkType.M3U8
+                                    ) {
+                                        this.headers = mapOf("Referer" to mainUrl)
+                                        this.quality = when (resolution) { 3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240 }
+                                    }
+                                )
+                                if (!videoLoaded) {
+                                    videoData.subtitles?.forEach { sub ->
+                                        if (!sub.url.isNullOrBlank())
+                                            subtitleCallback.invoke(newSubtitleFile(lang = sub.title ?: sub.abbreviate ?: "Unknown", url = sub.url))
+                                    }
                                 }
-                            )
-                            if (!videoLoaded) {
-                                videoData.subtitles?.forEach { sub ->
-                                    if (!sub.url.isNullOrBlank())
-                                        subtitleCallback.invoke(newSubtitleFile(lang = sub.title ?: sub.abbreviate ?: "Unknown", url = sub.url))
-                                }
+                                videoLoaded = true
                             }
-                            videoLoaded = true
-                        }
-                    } catch (e: Exception) { /* try next resolution */ }
+                        } catch (e: Exception) { /* try next resolution */ }
+                    }
                 }
             } else {
                 for (track in availableTracks) {
