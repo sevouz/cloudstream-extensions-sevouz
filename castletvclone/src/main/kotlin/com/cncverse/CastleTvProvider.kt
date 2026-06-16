@@ -1,7 +1,6 @@
 package com.cncverse
 
 import android.content.Context
-import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.base64DecodeArray
@@ -340,93 +339,6 @@ class CastleTvProvider : MainAPI() {
         } catch (e: Exception) { e.printStackTrace(); null }
     }
 
-    // ── M3U8 helpers ─────────────────────────────────────────────────────────
-
-    /**
-     * Parses a master M3U8 and returns a map of audioGroupId -> list of
-     * (languageName, absoluteUri) for every #EXT-X-MEDIA TYPE=AUDIO entry.
-     */
-    private fun parseAudioTracks(m3u8Content: String, baseUrl: String): Map<String, List<Pair<String, String>>> {
-        val result = mutableMapOf<String, MutableList<Pair<String, String>>>()
-        val audioLineRegex = Regex("""#EXT-X-MEDIA:TYPE=AUDIO.*""")
-        for (line in m3u8Content.lines()) {
-            if (!audioLineRegex.matches(line)) continue
-            val groupId = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1) ?: continue
-            val langName = Regex("""NAME="([^"]+)"""").find(line)?.groupValues?.get(1) ?: continue
-            val uri = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1) ?: continue
-            val absoluteUri = if (uri.startsWith("http")) uri
-                              else baseUrl.substringBeforeLast('/') + "/" + uri
-            result.getOrPut(groupId) { mutableListOf() }.add(Pair(langName, absoluteUri))
-        }
-        return result
-    }
-
-    /**
-     * Rewrites a master M3U8 so that every #EXT-X-STREAM-INF's AUDIO attribute
-     * points only to [targetGroupId], and all other #EXT-X-MEDIA TYPE=AUDIO
-     * entries for different group-ids are removed.
-     * Returns a data: URI that the player can load directly.
-     */
-    private fun buildSingleAudioM3u8(
-        m3u8Content: String,
-        baseUrl: String,
-        targetGroupId: String,
-        targetLangName: String
-    ): String {
-        val base = baseUrl.substringBeforeLast('/')
-        val lines = m3u8Content.lines()
-        val out = StringBuilder()
-        var i = 0
-        while (i < lines.size) {
-            val line = lines[i]
-            when {
-                // Keep only EXT-X-MEDIA entries that belong to our target group
-                line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") -> {
-                    val groupId = Regex("""GROUP-ID="([^"]+)"""").find(line)?.groupValues?.get(1)
-                    val langName = Regex("""NAME="([^"]+)"""").find(line)?.groupValues?.get(1)
-                    if (groupId == targetGroupId && langName == targetLangName) {
-                        // Mark this track as DEFAULT=YES so the player auto-selects it
-                        val rewritten = line
-                            .replace(Regex("""DEFAULT=\w+"""), "DEFAULT=YES")
-                            .replace(Regex("""AUTOSELECT=\w+"""), "AUTOSELECT=YES")
-                        out.appendLine(rewritten)
-                    }
-                    // else drop all other audio entries
-                }
-                // For stream variants, force AUDIO attribute to our group
-                line.startsWith("#EXT-X-STREAM-INF") -> {
-                    val rewritten = if (line.contains("AUDIO=")) {
-                        line.replace(Regex("""AUDIO="[^"]*""""), """AUDIO="$targetGroupId"""")
-                    } else {
-                        "$line,AUDIO=\"$targetGroupId\""
-                    }
-                    out.appendLine(rewritten)
-                    // Also make the segment URI absolute
-                    i++
-                    if (i < lines.size) {
-                        val segUri = lines[i].trim()
-                        val absUri = if (segUri.startsWith("http")) segUri else "$base/$segUri"
-                        out.appendLine(absUri)
-                    }
-                }
-                // Make all other URIs (key, map, etc.) absolute
-                line.startsWith("#EXT-X-KEY") || line.startsWith("#EXT-X-MAP") -> {
-                    val rewritten = line.replace(Regex("""URI="([^"]+)"""")) { mr ->
-                        val uri = mr.groupValues[1]
-                        val abs = if (uri.startsWith("http")) uri else "$base/$uri"
-                        """URI="$abs""""
-                    }
-                    out.appendLine(rewritten)
-                }
-                else -> out.appendLine(line)
-            }
-            i++
-        }
-        val bytes = out.toString().toByteArray(StandardCharsets.UTF_8)
-        val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
-        return "data:application/vnd.apple.mpegurl;base64,$encoded"
-    }
-
     // ── Load links ───────────────────────────────────────────────────────────
 
     override suspend fun loadLinks(
@@ -452,69 +364,40 @@ class CastleTvProvider : MainAPI() {
 
             val hasIndividualVideo = availableTracks.any { it.existIndividualVideo == true }
             if (!hasIndividualVideo && availableTracks.isNotEmpty()) {
-                // All language tracks share the same M3U8 (audio streams are embedded).
-                // Fetch the master M3U8 once per resolution, parse #EXT-X-MEDIA AUDIO entries,
-                // and build a per-language rewritten M3U8 so the player sees only one audio track.
+                val firstTrack = availableTracks.first()
+                val languageId = firstTrack.languageId ?: return false
+                val allLanguageNames = availableTracks.mapNotNull { it.languageName ?: it.abbreviate }.joinToString(", ")
+
                 for (resolution in resolutions) {
                     try {
-                        val videoApiUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
-                        val firstTrack = availableTracks.first()
-                        val firstLangId = firstTrack.languageId ?: continue
-                        val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","languageId":"$firstLangId","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
-                        val videoResponse = app.post(url = videoApiUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                        val videoUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
+                        val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
+                        val videoResponse = app.post(url = videoUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
                         val decryptedJson = decryptData(videoResponse.text, securityKey) ?: continue
                         val videoData = mapper.readValue<VideoResponse>(decryptedJson).data
-                        val masterUrl = videoData.videoUrl ?: continue
-                        if (videoData.permissionDenied == true) continue
 
-                        // Fetch and parse the master M3U8
-                        val m3u8Content = app.get(masterUrl, headers = mapOf("Referer" to mainUrl)).text
-                        val audioGroups = parseAudioTracks(m3u8Content, masterUrl)
-
-                        val qualityLabel = when (resolution) { 3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240 }
-
-                        if (audioGroups.isEmpty()) {
-                            // No separate audio groups — emit master as-is
+                        if (videoData.videoUrl != null && videoData.permissionDenied != true) {
                             callback.invoke(
                                 newExtractorLink(
                                     source = name,
-                                    name = "$name [${qualityLabel}p]",
-                                    url = masterUrl,
+                                    name = if (videoData.videoUrl.contains("preview", ignoreCase = true))
+                                        "$name - $allLanguageNames (preview) Requires Castle TV Premium"
+                                    else "$name - $allLanguageNames",
+                                    url = videoData.videoUrl,
                                     type = ExtractorLinkType.M3U8
                                 ) {
                                     this.headers = mapOf("Referer" to mainUrl)
-                                    this.quality = qualityLabel
+                                    this.quality = when (resolution) { 3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240 }
                                 }
                             )
-                        } else {
-                            // Build one link per language using a rewritten M3U8
-                            for ((groupId, langList) in audioGroups) {
-                                for ((langName, _) in langList) {
-                                    val dataUri = buildSingleAudioM3u8(m3u8Content, masterUrl, groupId, langName)
-                                    val isPreview = masterUrl.contains("preview", ignoreCase = true)
-                                    callback.invoke(
-                                        newExtractorLink(
-                                            source = name,
-                                            name = if (isPreview) "$name - $langName [${qualityLabel}p] (preview) Requires Castle TV Premium"
-                                                   else "$name - $langName [${qualityLabel}p]",
-                                            url = dataUri,
-                                            type = ExtractorLinkType.M3U8
-                                        ) {
-                                            this.headers = mapOf("Referer" to mainUrl)
-                                            this.quality = qualityLabel
-                                        }
-                                    )
+                            if (!videoLoaded) {
+                                videoData.subtitles?.forEach { sub ->
+                                    if (!sub.url.isNullOrBlank())
+                                        subtitleCallback.invoke(newSubtitleFile(lang = sub.title ?: sub.abbreviate ?: "Unknown", url = sub.url))
                                 }
                             }
+                            videoLoaded = true
                         }
-
-                        if (!videoLoaded) {
-                            videoData.subtitles?.forEach { sub ->
-                                if (!sub.url.isNullOrBlank())
-                                    subtitleCallback.invoke(newSubtitleFile(lang = sub.title ?: sub.abbreviate ?: "Unknown", url = sub.url))
-                            }
-                        }
-                        videoLoaded = true
                     } catch (e: Exception) { /* try next resolution */ }
                 }
             } else {
