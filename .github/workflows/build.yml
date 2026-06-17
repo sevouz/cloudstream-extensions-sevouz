@@ -43,6 +43,11 @@ jobs:
           CASTLE_SUFFIX: ${{ secrets.CASTLE_SUFFIX }}
           MOVIEBOX_SECRET_KEY_DEFAULT: ${{ secrets.MOVIEBOX_SECRET_KEY_DEFAULT }}
           MOVIEBOX_SECRET_KEY_ALT: ${{ secrets.MOVIEBOX_SECRET_KEY_ALT }}
+          CRICIFY_PROVIDER_SECRET1: ${{ secrets.CRICIFY_PROVIDER_SECRET1 }}
+          CRICIFY_PROVIDER_SECRET2: ${{ secrets.CRICIFY_PROVIDER_SECRET2 }}
+          CRICFY_FIREBASE_API_KEY: ${{ secrets.CRICFY_FIREBASE_API_KEY }}
+          CRICFY_FIREBASE_APP_ID: ${{ secrets.CRICFY_FIREBASE_APP_ID }}
+          CRICFY_FIREBASE_PROJECT_NUMBER: ${{ secrets.CRICFY_FIREBASE_PROJECT_NUMBER }}
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
