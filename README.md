@@ -4,7 +4,7 @@
 
 <br>
 
-<img src="https://img.shields.io/badge/Plugins-9-0078D4?style=for-the-badge&logo=puzzle-piece&logoColor=white" /> <img src="https://img.shields.io/badge/Status-Active-00C853?style=for-the-badge&logo=checkmarx&logoColor=white" /> <img src="https://img.shields.io/badge/Android-Platform-3DDC84?style=for-the-badge&logo=android&logoColor=white" /> <img src="https://img.shields.io/badge/Kotlin-Powered-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" />
+<img src="https://img.shields.io/badge/Plugins-10-0078D4?style=for-the-badge&logo=puzzle-piece&logoColor=white" /> <img src="https://img.shields.io/badge/Status-Active-00C853?style=for-the-badge&logo=checkmarx&logoColor=white" /> <img src="https://img.shields.io/badge/Android-Platform-3DDC84?style=for-the-badge&logo=android&logoColor=white" /> <img src="https://img.shields.io/badge/Kotlin-Powered-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" />
 
 <br>
 
@@ -83,6 +83,7 @@ If these plugins save you time and you want to say thanks, a small donation keep
 | 🎬 | **netmirrorclone** | Netflix, PrimeVideo, Disney+ Hotstar | Hindi |
 | 🎬 | **movieboxinclone** | Multi Language Movies & Series | Tamil |
 | 🎬 | **multimoviesclone** | Indian Multi-language HD Provider | Hindi |
+| 🎬 | **hdhub4uclone** | Bollywood/Hollywood Movies & Web Series | Hindi |
 | 🎌 | **anikotoclone** | Anime (SUB/DUB) — HD Streaming | English |
 | 🎌 | **animepaheclone** | Anime (SUB/DUB) | English |
 | 🎌 | **animesaltclone** | Anime & Cartoon in Hindi | Hindi |
