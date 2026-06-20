@@ -4,7 +4,7 @@
 
 <br>
 
-<img src="https://img.shields.io/badge/Plugins-10-0078D4?style=for-the-badge&logo=puzzle-piece&logoColor=white" /> <img src="https://img.shields.io/badge/Status-Active-00C853?style=for-the-badge&logo=checkmarx&logoColor=white" /> <img src="https://img.shields.io/badge/Android-Platform-3DDC84?style=for-the-badge&logo=android&logoColor=white" /> <img src="https://img.shields.io/badge/Kotlin-Powered-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" />
+<img src="https://img.shields.io/badge/Plugins-11-0078D4?style=for-the-badge&logo=puzzle-piece&logoColor=white" /> <img src="https://img.shields.io/badge/Status-Active-00C853?style=for-the-badge&logo=checkmarx&logoColor=white" /> <img src="https://img.shields.io/badge/Android-Platform-3DDC84?style=for-the-badge&logo=android&logoColor=white" /> <img src="https://img.shields.io/badge/Kotlin-Powered-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" />
 
 <br>
 
@@ -89,6 +89,7 @@ If these plugins save you time and you want to say thanks, a small donation keep
 | 🎌 | **animesaltclone** | Anime & Cartoon in Hindi | Hindi |
 | 🎌 | **animedekhoclone** | AnimeDekho, OnePace, HindiSubAnime | Hindi |
 | 🎌 | **anizoneclone** | Anizone.to Anime Streams | English |
+| 🎌 | **animesugeclone** | Anime (SUB/DUB) — HD Streaming | English |
 
 </div>
 
