@@ -25,22 +25,7 @@ object StarPopupHelper {
     private const val SPONSOR_URL = "https://www.paywithchai.in/nivincnc"
     
     fun showStarPopupIfNeeded(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        
-        if (prefs.getBoolean(KEY_SHOWN_STAR_POPUP, false)) {
-            return
-        }
-        
-        prefs.edit().putBoolean(KEY_SHOWN_STAR_POPUP, true).apply()
-        
-        Handler(Looper.getMainLooper()).post {
-            try {
-                val activity = context as? Activity ?: return@post
-                showStyledDialog(activity)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error showing star popup: ${e.message}")
-            }
-        }
+        // Popup removed
     }
     
     private fun showStyledDialog(activity: Activity) {
