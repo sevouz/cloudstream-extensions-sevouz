@@ -71,6 +71,8 @@ subprojects {
             buildConfigField("String", "CASTLE_SUFFIX", "\"${getSecret("CASTLE_SUFFIX")}\"")
             buildConfigField("String", "SIMKL_API", "\"${getSecret("SIMKL_API")}\"")
             buildConfigField("String", "MAL_API", "\"${getSecret("MAL_API")}\"")
+            buildConfigField("String", "TMDB_KEY", "\"${getSecret("TMDB_KEY")}\"")
+            buildConfigField("String", "CC_COOKIE", "\"${getSecret("CC_COOKIE")}\"")
             buildConfigField("String", "LIBRARY_PACKAGE_NAME", "\"com.cncverse\"")
             buildConfigField("String", "CRICIFY_PROVIDER_SECRET1", "\"${getSecret("CRICIFY_PROVIDER_SECRET1")}\"")
             buildConfigField("String", "CRICIFY_PROVIDER_SECRET2", "\"${getSecret("CRICIFY_PROVIDER_SECRET2")}\"")
