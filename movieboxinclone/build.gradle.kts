@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 16
+version = 26
 
 android {
     buildFeatures {
@@ -7,12 +7,19 @@ android {
     }
 }
 
+dependencies {
+    val cloudstream by configurations
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("com.google.android.material:material:1.14.0")
+    cloudstream("com.lagradost:cloudstream3:pre-release")
+}
+
 cloudstream {
-    language = "ta"
+    language = "hi"
     // All of these properties are optional, you can safely remove them
 
-    description = "Multi Language Movies and Series Provider (Local homepage based on region)"
-    authors = listOf("NivinCNC")
+    description = "Multi Language Movies and Series Provider"
+    authors = listOf("NivinCNC,Phisher98")
 
     /**
      * Status int as the following:
@@ -26,6 +33,9 @@ cloudstream {
         "Movie",
         "TvSeries"
     )
+    requiresResources = true
 
-    iconUrl = "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/MovieBoxProviderIN/icon.png"
+    iconUrl = "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/MovieBoxProvider/icon.png"
+
+    isCrossPlatform = false
 }

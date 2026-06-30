@@ -1,5 +1,6 @@
-package com.cncverse
+package com.MovieBox
 
+import android.content.SharedPreferences
 import android.annotation.SuppressLint
 import android.net.Uri
 import com.fasterxml.jackson.databind.JsonNode
@@ -40,24 +41,125 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.amap
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.net.URLEncoder
 import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.max
 import java.security.SecureRandom
-import kotlin.random.Random
-class MovieBoxProviderIN : MainAPI() {
+
+class MovieBoxProvider(private val sharedPref: SharedPreferences? = null) : MainAPI() {
+
     companion object {
-        var context: android.content.Context? = null
+        val HOST_POOL = listOf(
+            "https://api6.aoneroom.com",
+            "https://api5.aoneroom.com",
+            "https://api4.aoneroom.com",
+            "https://api4sg.aoneroom.com",
+            "https://api3.aoneroom.com",
+        )
+        var bearerToken: String? = null
+
+        /** Decode the exp (expiry) Unix-seconds from a JWT without a library. */
+        fun decodeJwtExpiry(token: String): Long {
+            return try {
+                val payload = token.split(".").getOrNull(1) ?: return 0L
+                // JWT uses base64url (no padding), convert to standard base64
+                val padded = payload.replace("-", "+").replace("_", "/")
+                    .let { it + "=".repeat((4 - it.length % 4) % 4) }
+                val json = android.util.Base64.decode(padded, android.util.Base64.DEFAULT)
+                    .toString(Charsets.UTF_8)
+                org.json.JSONObject(json).getLong("exp")
+            } catch (_: Exception) { 0L }
+        }
+
+        /** True if the token is non-blank and won't expire within the next hour. */
+        fun isTokenValid(token: String?): Boolean {
+            if (token.isNullOrBlank()) return false
+            val exp = decodeJwtExpiry(token)
+            return exp > System.currentTimeMillis() / 1000 + 3600
+        }
     }
-    override var mainUrl = "https://api3.aoneroom.com"
-    override var name = "MovieBoxIN"
+
+    override var mainUrl = sharedPref?.getString("moviebox_host", HOST_POOL[4]) ?: HOST_POOL[4]
+
+    // ── Token management ────────────────────────────────────────────────────────
+    private val PREF_TOKEN_KEY = "moviebox_bearer_token_v3"
+
+    /**
+     * Persist a fresh JWT received from the server's x-user response header.
+     * Only saved when it is actually valid (not expired).
+     */
+    private fun saveToken(token: String?) {
+        if (token.isNullOrBlank()) return
+        if (!isTokenValid(token)) return          // don't cache an already-expired token
+        bearerToken = token
+        sharedPref?.edit()?.putString(PREF_TOKEN_KEY, token)?.apply()
+    }
+
+    /**
+     * Return the best available JWT:
+     *   1. A valid (non-expired) token previously cached in memory/SharedPreferences
+     *   2. If none, fetches a fresh anonymous token from the server.
+     */
+    private suspend fun getCachedToken(): String {
+        if (isTokenValid(bearerToken)) return bearerToken!!
+        val saved = sharedPref?.getString(PREF_TOKEN_KEY, null)
+        if (isTokenValid(saved)) {
+            bearerToken = saved
+            return saved!!
+        }
+        
+        // Fetch new anonymous token
+        val url = "$mainUrl/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+        val (brand, model) = randomBrandModel()
+        val xClientToken = generateXClientToken()
+        val xTrSignature = generateXTrSignature("GET", "application/json", "application/json", url)
+        
+        val headers = mapOf(
+            "user-agent" to "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; $brand; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
+            "accept" to "application/json",
+            "content-type" to "application/json",
+            "x-client-token" to xClientToken,
+            "x-tr-signature" to xTrSignature,
+            "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":""}""",
+            "x-client-status" to "0"
+        )
+        
+        try {
+            val response = app.get(url, headers = headers)
+            val xUser = response.headers["x-user"]
+            if (!xUser.isNullOrBlank()) {
+                val token = jacksonObjectMapper().readTree(xUser)["token"]?.asText()
+                if (token != null) {
+                    saveToken(token)
+                    return token
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return ""
+    }
+
+    /**
+     * If xUserHeader is not null/blank, extract the JWT from it and persist it.
+     * Pass response.headers["x-user"] directly — no dependency on any specific Response type.
+     */
+    private fun persistTokenFromXUser(xUserHeader: String?) {
+        if (xUserHeader.isNullOrBlank()) return
+        try {
+            val token = jacksonObjectMapper().readTree(xUserHeader)["token"]?.asText() ?: return
+            saveToken(token)
+        } catch (_: Exception) {}
+    }
+
+    override var name = "MovieBox"
     override val hasMainPage = true
-    override var lang = "ta"
+    override var lang = "hi"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val secretKeyDefault = base64Decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==")
@@ -163,15 +265,81 @@ class MovieBoxProviderIN : MainAPI() {
         return "$timestamp|2|$signatureB64"
     }
 
-     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Show star popup on first visit (shared across all CNCVerse plugins)
-        context?.let { StarPopupHelper.showStarPopupIfNeeded(it) }
-        
-        val url = "$mainUrl/wefeed-mobile-bff/tab-operating?page=1&tabId=0&version="
+    override val mainPage = mainPageOf(
+        "4516404531735022304" to "Trending",
+        "5692654647815587592" to "Trending in Cinema",
+        "414907768299210008"  to "Bollywood",
+        "3859721901924910512" to "South Indian",
+        "8019599703232971616" to "Hollywood",
+        "4741626294545400336" to "Top Series This Week",
+        "8434602210994128512" to "Anime",
+        "1255898847918934600" to "Reality TV",
+        "4903182713986896328" to "Indian Drama",
+        "7878715743607948784" to "Korean Drama",
+        "8788126208987989488" to "Chinese Drama",
+        "3910636007619709856" to "Western TV",
+        "5177200225164885656" to "Turkish Drama",
+        "1|1" to "Movies",
+        "1|2" to "Series",
+        "1|1006" to "Anime",
+        "1|1;country=India" to "Indian (Movies)",
+        "1|2;country=India" to "Indian (Series)",
+        "1|1;classify=Hindi dub;country=United States" to "USA (Movies)",
+        "1|2;classify=Hindi dub;country=United States" to "USA (Series)",
+        "1|1;country=Japan" to "Japan (Movies)",
+        "1|2;country=Japan" to "Japan (Series)",
+        "1|1;country=China" to "China (Movies)",
+        "1|2;country=China" to "China (Series)",
+        "1|1;country=Philippines" to "Philippines (Movies)",
+        "1|2;country=Philippines" to "Philippines (Series)",
+        "1|1;country=Thailand" to "Thailand(Movies)",
+        "1|2;country=Thailand" to "Thailand(Series)",
+        "1|1;country=Nigeria" to "Nollywood (Movies)",
+        "1|2;country=Nigeria" to "Nollywood (Series)",
+        "1|1;country=Korea" to "South Korean (Movies)",
+        "1|2;country=Korea" to "South Korean (Series)",
+        "1|1;classify=Hindi dub;genre=Action" to "Action (Movies)",
+        "1|1;classify=Hindi dub;genre=Crime" to "Crime (Movies)",
+        "1|1;classify=Hindi dub;genre=Comedy" to "Comedy (Movies)",
+        "1|2;classify=Hindi dub;genre=Crime" to "Crime (Series)",
+        "1|2;classify=Hindi dub;genre=Comedy" to "Comedy (Series)",
+        )
 
-        // Generate required security headers.
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val perPage = 15
+        val url = if (request.data.contains("|")) "$mainUrl/wefeed-mobile-bff/subject-api/list" else "$mainUrl/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=${request.data}&page=$page&perPage=$perPage"
+
+        val data1 = request.data
+
+        val mainParts = data1.substringBefore(";").split("|")
+        val pg = mainParts.getOrNull(0)?.toIntOrNull() ?: 1
+        val channelId = mainParts.getOrNull(1)
+
+        val options = mutableMapOf<String, String>()
+        data1.substringAfter(";", "")
+            .split(";")
+            .forEach {
+                val (k, v) = it.split("=").let { p ->
+                    p.getOrNull(0) to p.getOrNull(1)
+                }
+                if (!k.isNullOrBlank() && !v.isNullOrBlank()) {
+                    options[k] = v
+                }
+            }
+
+        val classify = options["classify"] ?: "All"
+        val country  = options["country"] ?: "All"
+        val year     = options["year"] ?: "All"
+        val genre    = options["genre"] ?: "All"
+        val sort     = options["sort"] ?: "ForYou"
+
+        val jsonBody = """{"page":$pg,"perPage":$perPage,"channelId":"$channelId","classify":"$classify","country":"$country","year":"$year","genre":"$genre","sort":"$sort"}"""
+
+        // Use current timestamps instead of hardcoded ones
         val xClientToken = generateXClientToken()
-        val xTrSignature = generateXTrSignature("GET", "application/json", "application/json", url)
+        val xTrSignature = generateXTrSignature("POST", "application/json", "application/json; charset=utf-8", url , jsonBody)
+
+        val getxTrSignature = generateXTrSignature("GET", "application/json", "application/json", url)
 
         val headers = mapOf(
             "user-agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)",
@@ -185,64 +353,55 @@ class MovieBoxProviderIN : MainAPI() {
             "x-play-mode" to "2" // Optional, if needed for specific API behavior
         )
 
-        val response = app.get(url, headers = headers)
-        val responseBody = response.body?.string() ?: ""
+        val getheaders = mapOf(
+            "user-agent" to "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)",
+            "accept" to "application/json",
+            "content-type" to "application/json",
+            "connection" to "keep-alive",
+            "x-client-token" to xClientToken,
+            "x-tr-signature" to getxTrSignature,
+            "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"sdk_gphone64_x86_64","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
+            "x-client-status" to "0",
+        )
 
-        // Helper function to parse a 'subject' JSON object into your app's data model.
-        fun parseSubject(subjectJson: JsonNode?): SearchResponse? {
-            subjectJson ?: return null // Return null if the subject object is missing
-            val subjectId = subjectJson["subjectId"]?.asText() ?: return null
-            val title = subjectJson["title"]?.asText() ?: return null
-            val coverUrl = subjectJson["cover"]?.get("url")?.asText()
-            val subjectType = when (subjectJson["subjectType"]?.asInt()) {
-                1 -> TvType.Movie
-                2 -> TvType.TvSeries
-                else -> TvType.Movie // Default to Movie
-            }
-            return newMovieSearchResponse(title, subjectId, subjectType) {
-                this.posterUrl = coverUrl
-                this.score = Score.from10(subjectJson["imdbRatingValue"]?.asText())
-            }
-        }
+            val requestBody = jsonBody.toRequestBody("application/json".toMediaType())
+            val response = if (request.data.contains("|")) app.post(url, headers = headers, requestBody = requestBody) else app.get(url, headers = getheaders)
 
-        // Use Jackson to parse the new, multi-section API response structure.
-        val homePageLists = try {
-            val mapper = jacksonObjectMapper()
-            val root = mapper.readTree(responseBody)
-            val sections = root["data"]?.get("items") ?: return newHomePageResponse(emptyList())
-
-            // Iterate through each section (e.g., Banners, Trending Now, etc.)
-            sections.mapNotNull { section ->
-                val title = section["title"]?.asText()?.let {
-                    if (it.equals("banner", ignoreCase = true)) "🔥Top Picks" else it
-                } ?: return@mapNotNull null
-                val type = section["type"]?.asText()
-
-                // Extract the list of media items based on the section type.
-                val mediaList = when (type) {
-                    "BANNER" -> section["banner"]?.get("banners")
-                        ?.mapNotNull { bannerItem -> parseSubject(bannerItem["subject"]) }
-                    "SUBJECTS_MOVIE" -> section["subjects"]
-                        ?.mapNotNull { subjectItem -> parseSubject(subjectItem) }
-                    "CUSTOM" -> section["customData"]?.get("items")
-                        ?.mapNotNull { customItem -> parseSubject(customItem["subject"]) }
-                    else -> null
+            val responseBody = response.text
+            // Use Jackson to parse the new API response structure
+            val data = try {
+                val mapper = jacksonObjectMapper()
+                val root = mapper.readTree(responseBody)
+                val items = root["data"]?.get("items") ?: root["data"]?.get("subjects") ?: return newHomePageResponse(emptyList())
+                items.mapNotNull { item ->
+                    val title = item["title"]?.asText()?.substringBefore("[") ?: return@mapNotNull null
+                    val id = item["subjectId"]?.asText() ?: return@mapNotNull null
+                    val coverImg = item["cover"]?.get("url")?.asText()
+                    val subjectType = item["subjectType"]?.asInt() ?: 1
+                    val type = when (subjectType) {
+                        1 -> TvType.Movie
+                        2 -> TvType.TvSeries
+                        else -> TvType.Movie
+                    }
+                    newMovieSearchResponse(
+                        name = title,
+                        url = id,
+                        type = type
+                    ) {
+                        this.posterUrl = coverImg
+                        this.score = Score.from10(item["imdbRatingValue"]?.asText())
+                    }
                 }
+            } catch (_: Exception) {
+                null
+            } ?: emptyList()
 
-                // Only create a HomePageList if the section contains valid media items.
-                if (mediaList.isNullOrEmpty()) {
-                    null
-                } else {
-                    HomePageList(title, mediaList)
-                }
-            }
-        } catch (e: Exception) {
-            // In case of a parsing error, return an empty list.
-            e.printStackTrace()
-            emptyList()
-        }
+            return newHomePageResponse(
+                listOf(
+                    HomePageList(request.name, data)
+                )
+            )
 
-        return newHomePageResponse(homePageLists)
     }
 
     override suspend fun search(query: String,page: Int): SearchResponseList {
@@ -258,7 +417,8 @@ class MovieBoxProviderIN : MainAPI() {
             "x-client-token" to xClientToken,
             "x-tr-signature" to xTrSignature,
             "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
-            "x-client-status" to "0"
+            "x-client-status" to "0",
+            "Authorization" to "Bearer ${getCachedToken()}"
         )
         val requestBody = jsonBody.toRequestBody("application/json".toMediaType())
         val response = app.post(
@@ -266,8 +426,10 @@ class MovieBoxProviderIN : MainAPI() {
             headers = headers,
             requestBody = requestBody
         )
+        // Persist any fresh token the server returned
+        persistTokenFromXUser(response.headers["x-user"])
 
-        val responseBody = response.body.string()
+        val responseBody = response.text
         val mapper = jacksonObjectMapper()
         val root = mapper.readTree(responseBody)
         val results = root.get("data")?.get("results") ?: return newSearchResponseList(emptyList())
@@ -320,15 +482,17 @@ class MovieBoxProviderIN : MainAPI() {
             "x-tr-signature" to xTrSignature,
             "x-client-info" to """{"package_name":"com.community.mbox.in","version_name":"3.0.03.0529.03","version_code":50020042,"os":"android","os_version":"16","device_id":"$deviceId","install_store":"ps","gaid":"d7578036d13336cc","brand":"google","model":"${randomBrandModel()}","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
             "x-client-status" to "0",
-            "x-play-mode" to "2"
+            "x-play-mode" to "2",
+            "Authorization" to "Bearer ${getCachedToken()}"
         )
 
         val response = app.get(finalUrl, headers = headers)
+        persistTokenFromXUser(response.headers["x-user"])
         if (response.code != 200) {
-            throw ErrorLoadingException("Failed to load data: ${response.body.string()}")
+            throw ErrorLoadingException("Failed to load data: ${response.text}")
         }
 
-        val body = response.body.string()
+        val body = response.text
         val mapper = jacksonObjectMapper()
         val root = mapper.readTree(body)
         val data = root["data"] ?: throw ErrorLoadingException("No data")
@@ -427,7 +591,7 @@ class MovieBoxProviderIN : MainAPI() {
                 val seasonResponse = app.get(seasonUrl, headers = seasonHeaders)
                 if (seasonResponse.code != 200) continue
 
-                val seasonRoot = mapper.readTree(seasonResponse.body.string())
+                val seasonRoot = mapper.readTree(seasonResponse.text)
                 val seasons = seasonRoot["data"]?.get("seasons")
 
                 if (seasons == null || !seasons.isArray || seasons.size() == 0) {
@@ -567,7 +731,8 @@ class MovieBoxProviderIN : MainAPI() {
                 "x-client-token" to subjectXClientToken,
                 "x-tr-signature" to subjectXTrSignature,
                 "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","install_ch":"ps","device_id":"$deviceId","install_store":"ps","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"$model","model":"$brand","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"Asia/Calcutta","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}""".trimIndent(),
-                "x-client-status" to "0"
+                "x-client-status" to "0",
+                "Authorization" to "Bearer ${getCachedToken()}"
             )
 
             val subjectResponse = app.get(subjectUrl, headers = subjectHeaders)
@@ -575,7 +740,7 @@ class MovieBoxProviderIN : MainAPI() {
             val subjectIds = mutableListOf<Pair<String, String>>() // Pair of (subjectId, language)
             var originalLanguageName = "Original"
             if (subjectResponse.code == 200) {
-                val subjectResponseBody = subjectResponse.body.string()
+                val subjectResponseBody = subjectResponse.text
                 val subjectRoot = mapper.readTree(subjectResponseBody)
                 val subjectData = subjectRoot["data"]
                 val dubs = subjectData?.get("dubs")
@@ -594,22 +759,19 @@ class MovieBoxProviderIN : MainAPI() {
                 }
             }
 
-            val xUserHeader = subjectResponse.headers["x-user"]
+            // Persist any fresh JWT the server sends back in x-user
+            persistTokenFromXUser(subjectResponse.headers["x-user"])
 
-            var token: String? = null
-
-            if (!xUserHeader.isNullOrBlank()) {
-                val xUserJson = mapper.readTree(xUserHeader)
-                token = xUserJson["token"]?.asText()
-            }
+            // Use freshest available token for all downstream link requests
+            val token: String = getCachedToken()
 
             // Always add the original subject ID first as the default source with proper language name
             subjectIds.add(0, Pair(originalSubjectId, originalLanguageName))
 
             //var hasAnyLinks = false
 
-            // Process each subjectId (including dubs)
-            for ((subjectId, language) in subjectIds) {
+            // Process each subjectId (including dubs) - concurrent
+            subjectIds.amap { (subjectId, language) ->
                 try {
                     val url = "$mainUrl/wefeed-mobile-bff/subject-api/play-info?subjectId=$subjectId&se=$season&ep=$episode"
 
@@ -629,7 +791,7 @@ class MovieBoxProviderIN : MainAPI() {
 
                     val response = app.get(url, headers = headers)
                     if (response.code == 200) {
-                        val responseBody = response.body.string()
+                        val responseBody = response.text
                         val root = mapper.readTree(responseBody)
                         val playData = root["data"]
                         // Handle the new API response format with streams
@@ -755,7 +917,7 @@ class MovieBoxProviderIN : MainAPI() {
 
                             if (fallbackResponse.code == 200) {
 
-                                val fallbackRoot = mapper.readTree(fallbackResponse.body.string())
+                                val fallbackRoot = mapper.readTree(fallbackResponse.text)
                                 val detectors = fallbackRoot["data"]?.get("resourceDetectors")
 
                                 detectors?.forEach { detector ->
@@ -784,7 +946,7 @@ class MovieBoxProviderIN : MainAPI() {
                         }
                     }
                 } catch (_: Exception) {
-                    continue
+                    return@amap
                 }
             }
             
@@ -846,17 +1008,16 @@ private suspend fun searchAndPick(
             append("?api_key=").append("1865f43a0549ca50d341dd9ab8b29f49")
             append(extraParams)
             append("&include_adult=false&page=1")
-            append("&random=").append(Random.nextInt())
         }
         val text = app.get(url).text
         return JSONObject(text).optJSONArray("results")
     }
 
-    val multiResults = doSearch("search/multi", "&query=${URLEncoder.encode(normTitle, "UTF-8")}" + (if (year != null) "&year=$year" else ""))
+    val multiResults = doSearch("search/multi", "&query=$normTitle" + (if (year != null) "&year=$year" else ""))
     val searchQueues: List<Pair<String, org.json.JSONArray?>> = listOf(
         "multi" to multiResults,
-        "tv" to doSearch("search/tv", "&query=${URLEncoder.encode(normTitle, "UTF-8")}" + (if (year != null) "&first_air_date_year=$year" else "")),
-        "movie" to doSearch("search/movie", "&query=${URLEncoder.encode(normTitle, "UTF-8")}" + (if (year != null) "&year=$year" else ""))
+        "tv" to doSearch("search/tv", "&query=$normTitle" + (if (year != null) "&first_air_date_year=$year" else "")),
+        "movie" to doSearch("search/movie", "&query=$normTitle" + (if (year != null) "&year=$year" else ""))
     )
 
     var bestId: Int? = null
@@ -932,7 +1093,7 @@ private suspend fun searchAndPick(
 
     // fetch details for external_ids
     val detailKind = if (bestIsTv) "tv" else "movie"
-    val detailUrl = "https://api.themoviedb.org/3/$detailKind/$bestId?api_key=1865f43a0549ca50d341dd9ab8b29f49&append_to_response=external_ids&random=${Random.nextInt()}"
+    val detailUrl = "https://api.themoviedb.org/3/$detailKind/$bestId?api_key=1865f43a0549ca50d341dd9ab8b29f49&append_to_response=external_ids"
     val detailText = app.get(detailUrl).text
     val detailJson = JSONObject(detailText)
     val imdbId = detailJson.optJSONObject("external_ids")?.optString("imdb_id")
@@ -985,9 +1146,9 @@ suspend fun fetchTmdbLogoUrl(
     if (tmdbId == null) return null
 
     val url = if (type == TvType.Movie)
-        "$tmdbAPI/movie/$tmdbId/images?api_key=$apiKey&random=${Random.nextInt()}"
+        "$tmdbAPI/movie/$tmdbId/images?api_key=$apiKey"
     else
-        "$tmdbAPI/tv/$tmdbId/images?api_key=$apiKey&random=${Random.nextInt()}"
+        "$tmdbAPI/tv/$tmdbId/images?api_key=$apiKey"
 
     val json = runCatching { JSONObject(app.get(url).text) }.getOrNull() ?: return null
     val logos = json.optJSONArray("logos") ?: return null
