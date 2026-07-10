@@ -226,25 +226,30 @@ class HotStarMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<LoadData>(data).id
-        val cookies = mapOf(
+        val baseCookies = mapOf(
             "hd" to "on",
             "ott" to "hs"
         )
 
-        // Step 1: Get addhash from verify2 page
-        val verifyDoc = app.get(
+        val verifyResponse = app.get(
             "$mainUrl/mobile/verify2.php",
             headers = headers,
-            cookies = cookies,
+            cookies = baseCookies,
             referer = "$mainUrl/mobile/home"
-        ).document
-        val addHash = verifyDoc.selectFirst("body")?.attr("data-addhash") ?: ""
+        )
+        val setCookies = verifyResponse.headers["Set-Cookie"] ?: ""
+        val addHash = Regex("addhash=([^;]+)").find(setCookies)?.groupValues?.get(1)
+            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+            ?: verifyResponse.document.selectFirst("body")?.attr("data-addhash")
+            ?: ""
 
-        // Step 2: Get playlist
+        val playlistCookies = baseCookies.toMutableMap()
+        if (addHash.isNotBlank()) playlistCookies["addhash"] = addHash
+
         val responseText = app.get(
             "$mainUrl/mobile/hs/playlist.php?id=$id",
             headers = headers,
-            cookies = cookies,
+            cookies = playlistCookies,
             referer = "$mainUrl/mobile/home"
         ).text
 
@@ -269,7 +274,7 @@ class HotStarMirrorProvider : MainAPI() {
             callback.invoke(
                 newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
                     this.referer = "$mainUrl/"
-                    this.headers = mapOf("Cookie" to "hd=on; ott=hs")
+                    this.headers = mapOf("Cookie" to "hd=on; ott=hs; addhash=$addHash")
                 }
             )
         }

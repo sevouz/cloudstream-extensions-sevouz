@@ -226,25 +226,33 @@ class NetflixMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<LoadData>(data).id
-        val cookies = mapOf(
+        val baseCookies = mapOf(
             "hd" to "on",
             "ott" to "nf"
         )
 
-        // Step 1: Get addhash from verify2 page
-        val verifyDoc = app.get(
+        // Step 1: Get addhash cookie from verify2 page
+        val verifyResponse = app.get(
             "$mainUrl/mobile/verify2.php",
             headers = headers,
-            cookies = cookies,
+            cookies = baseCookies,
             referer = "$mainUrl/mobile/home"
-        ).document
-        val addHash = verifyDoc.selectFirst("body")?.attr("data-addhash") ?: ""
+        )
+        // Extract addhash from Set-Cookie header or from body attribute
+        val setCookies = verifyResponse.headers["Set-Cookie"] ?: ""
+        val addHash = Regex("addhash=([^;]+)").find(setCookies)?.groupValues?.get(1)
+            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+            ?: verifyResponse.document.selectFirst("body")?.attr("data-addhash")
+            ?: ""
 
-        // Step 2: Get playlist
+        // Step 2: Get playlist with addhash cookie included
+        val playlistCookies = baseCookies.toMutableMap()
+        if (addHash.isNotBlank()) playlistCookies["addhash"] = addHash
+
         val responseText = app.get(
             "$mainUrl/mobile/playlist.php?id=$id",
             headers = headers,
-            cookies = cookies,
+            cookies = playlistCookies,
             referer = "$mainUrl/mobile/home"
         ).text
 
@@ -270,7 +278,7 @@ class NetflixMirrorProvider : MainAPI() {
             callback.invoke(
                 newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
                     this.referer = "$mainUrl/"
-                    this.headers = mapOf("Cookie" to "hd=on; ott=nf")
+                    this.headers = mapOf("Cookie" to "hd=on; ott=nf; addhash=$addHash")
                 }
             )
         }
