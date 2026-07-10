@@ -218,17 +218,7 @@ open class DisneyStudioProvider(
         val id = parseJson<LoadData>(data).id
         val baseCookies = buildCookies().toMutableMap().apply { remove("t_hash_t") }
 
-        val verifyResponse = app.get(
-            "$mainUrl/mobile/verify2.php",
-            headers = headers,
-            cookies = baseCookies,
-            referer = "$mainUrl/mobile/home"
-        )
-        val setCookies = verifyResponse.headers["Set-Cookie"] ?: ""
-        val addHash = Regex("addhash=([^;]+)").find(setCookies)?.groupValues?.get(1)
-            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
-            ?: verifyResponse.document.selectFirst("body")?.attr("data-addhash")
-            ?: ""
+        val addHash = getOrFetchAddHash(mainUrl, headers, baseCookies)
 
         val playlistCookies = baseCookies.toMutableMap()
         if (addHash.isNotBlank()) playlistCookies["addhash"] = addHash
@@ -240,11 +230,9 @@ open class DisneyStudioProvider(
             referer = "$mainUrl/mobile/home"
         ).text
 
-        // Extract file URL using regex (more robust than JSON parsing)
         val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(responseText)
         val file = fileMatch?.groupValues?.get(1) ?: return false
 
-        // Replace unknown hash with actual addhash
         val fixedFile = if (addHash.isNotBlank() && file.contains("in=unknown")) {
             file.replace(Regex("in=[^&]+"), "in=$addHash")
         } else if (addHash.isNotBlank() && !file.contains("in=")) {

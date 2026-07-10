@@ -216,3 +216,32 @@ data class PlaylistSource(
     val label: String? = null,
     val type: String? = null
 )
+
+// Addhash cache - valid for 8 minutes (server sets 10 min, we use 8 for safety)
+private const val ADDHASH_MAX_AGE = 480_000L
+
+suspend fun getOrFetchAddHash(mainUrl: String, headers: Map<String, String>, cookies: Map<String, String>): String {
+    // Check cache first
+    val (savedHash, savedTimestamp) = NetflixMirrorStorage.getAddHash()
+    if (!savedHash.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < ADDHASH_MAX_AGE) {
+        return savedHash
+    }
+
+    // Fetch fresh addhash
+    val verifyResponse = app.get(
+        "$mainUrl/mobile/verify2.php",
+        headers = headers,
+        cookies = cookies,
+        referer = "$mainUrl/mobile/home"
+    )
+    val setCookieHeader = verifyResponse.headers["Set-Cookie"] ?: ""
+    val addHash = Regex("addhash=([^;]+)").find(setCookieHeader)?.groupValues?.get(1)
+        ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+        ?: verifyResponse.document.selectFirst("body")?.attr("data-addhash")
+        ?: ""
+
+    if (addHash.isNotBlank()) {
+        NetflixMirrorStorage.saveAddHash(addHash)
+    }
+    return addHash
+}

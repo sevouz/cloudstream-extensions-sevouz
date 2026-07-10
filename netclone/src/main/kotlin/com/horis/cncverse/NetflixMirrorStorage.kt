@@ -32,4 +32,18 @@ object NetflixMirrorStorage {
         editor.remove("nf_cookie_timestamp")
         editor.apply()
     }
+
+    fun saveAddHash(hash: String) {
+        val editor = prefs.edit()
+        editor.putString("addhash", hash)
+        editor.putLong("addhash_timestamp", System.currentTimeMillis())
+        editor.apply()
+    }
+
+    fun getAddHash(): Pair<String?, Long> {
+        return Pair(
+            prefs.getString("addhash", null),
+            prefs.getLong("addhash_timestamp", 0L)
+        )
+    }
 }
