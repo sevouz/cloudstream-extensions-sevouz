@@ -216,22 +216,27 @@ open class DisneyStudioProvider(
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<LoadData>(data).id
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "ott" to "hs",
-            "hd" to "on"
-        )
+        val cookies = mutableMapOf("hd" to "on", "ott" to "hs")
+        try {
+            cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+            if (cookie_value.isNotEmpty()) cookies["t_hash_t"] = cookie_value
+        } catch (_: Exception) {}
+
         val responseText = app.get(
             "$mainUrl/mobile/hs/playlist.php?id=$id",
             headers = headers,
             cookies = cookies,
             referer = "$mainUrl/home"
         ).text
-        val responseList = parseJson<List<PlaylistResponse>>(responseText)
-        val response = responseList.firstOrNull() ?: return false
 
+        val responseList = try {
+            parseJson<List<PlaylistResponse>>(responseText)
+        } catch (_: Exception) {
+            try { listOf(parseJson<PlaylistResponse>(responseText)) } catch (_: Exception) { return false }
+        }
+        val response = responseList.firstOrNull() ?: return false
         val sources = response.sources ?: return false
+
         sources.forEach { source ->
             val file = source.file ?: return@forEach
             val videoUrl = if (file.startsWith("http")) file else "$mainUrl$file"
