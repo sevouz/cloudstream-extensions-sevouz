@@ -232,12 +232,14 @@ class PrimeVideoMirrorProvider : MainAPI() {
             "ott" to "pv",
             "hd" to "on"
         )
-        val response = app.get(
+        val responseText = app.get(
             "$mainUrl/mobile/pv/playlist.php?id=$id",
             headers = headers,
             cookies = cookies,
             referer = "$mainUrl/home"
-        ).parsed<PlaylistResponse>()
+        ).text
+        val responseList = parseJson<List<PlaylistResponse>>(responseText)
+        val response = responseList.firstOrNull() ?: return false
 
         val sources = response.sources ?: return false
         sources.forEach { source ->
