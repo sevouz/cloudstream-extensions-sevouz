@@ -27,7 +27,7 @@ class HotStarMirrorProvider : MainAPI() {
     )
     override var lang = "ta"
 
-    override var mainUrl = "https://net77.cc"
+    override var mainUrl = "https://net52.cc"
     override var name = "Hotstar"
 
     override val hasMainPage = true
