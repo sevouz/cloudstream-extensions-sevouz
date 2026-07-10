@@ -222,7 +222,7 @@ open class DisneyStudioProvider(
             headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response.video_link.isNullOrBlank()) return false
 
         callback.invoke(
             newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
