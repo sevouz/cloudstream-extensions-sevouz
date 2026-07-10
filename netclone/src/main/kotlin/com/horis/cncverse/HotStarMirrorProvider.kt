@@ -227,10 +227,11 @@ class HotStarMirrorProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val response = app.get(
+        val responseText = app.get(
             "$apiBase/newtv/player.php?id=$id",
             headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        ).text
+        val response = parseJson<NewTvPlayerResponse>(responseText)
 
         if (response.video_link.isNullOrBlank()) return false
 
