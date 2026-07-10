@@ -27,7 +27,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
     )
     override var lang = "ta"
 
-    override var mainUrl = "https://net52.cc"
+    override var mainUrl = "https://net77.cc"
     override var name = "Prime Video"
 
     override val hasMainPage = true
@@ -225,39 +225,22 @@ class PrimeVideoMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val cookies = mutableMapOf("hd" to "on", "ott" to "pv")
-        try {
-            cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-            if (cookie_value.isNotEmpty()) cookies["t_hash_t"] = cookie_value
-        } catch (_: Exception) {}
+        val response = app.get(
+            "$apiBase/newtv/player.php?id=$id",
+            headers = buildNewTvHeaders("pv", mapOf("Usertoken" to ""))
+        ).parsed<NewTvPlayerResponse>()
 
-        val responseText = app.get(
-            "$mainUrl/mobile/pv/playlist.php?id=$id",
-            headers = headers,
-            cookies = cookies,
-            referer = "$mainUrl/home"
-        ).text
+        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
 
-        val responseList = try {
-            parseJson<List<PlaylistResponse>>(responseText)
-        } catch (_: Exception) {
-            try { listOf(parseJson<PlaylistResponse>(responseText)) } catch (_: Exception) { return false }
-        }
-        val response = responseList.firstOrNull() ?: return false
-        val sources = response.sources ?: return false
+        callback.invoke(
+            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
+                this.referer = response.referer ?: apiBase
+            }
+        )
 
-        sources.forEach { source ->
-            val file = source.file ?: return@forEach
-            val videoUrl = if (file.startsWith("http")) file else "$mainUrl$file"
-            callback.invoke(
-                newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                    this.referer = "$mainUrl/"
-                    this.headers = mapOf("Cookie" to "hd=on")
-                }
-            )
-        }
-        return sources.isNotEmpty()
+        return true
     }
 
     @Suppress("ObjectLiteralToLambda")
