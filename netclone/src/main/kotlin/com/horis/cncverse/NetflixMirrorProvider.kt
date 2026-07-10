@@ -238,7 +238,6 @@ class NetflixMirrorProvider : MainAPI() {
             cookies = baseCookies,
             referer = "$mainUrl/mobile/home"
         )
-        // Extract addhash from Set-Cookie header or from body attribute
         val setCookies = verifyResponse.headers["Set-Cookie"] ?: ""
         val addHash = Regex("addhash=([^;]+)").find(setCookies)?.groupValues?.get(1)
             ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
@@ -256,33 +255,26 @@ class NetflixMirrorProvider : MainAPI() {
             referer = "$mainUrl/mobile/home"
         ).text
 
-        val responseList = try {
-            parseJson<List<PlaylistResponse>>(responseText)
-        } catch (_: Exception) {
-            try { listOf(parseJson<PlaylistResponse>(responseText)) } catch (_: Exception) { return false }
-        }
-        val response = responseList.firstOrNull() ?: return false
-        val sources = response.sources ?: return false
+        // Extract file URL using regex (more robust than JSON parsing)
+        val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(responseText)
+        val file = fileMatch?.groupValues?.get(1) ?: return false
 
-        sources.forEach { source ->
-            val file = source.file ?: return@forEach
-            // Replace unknown hash with actual addhash
-            val fixedFile = if (addHash.isNotBlank() && file.contains("in=unknown")) {
-                file.replace(Regex("in=[^&]+"), "in=$addHash")
-            } else if (addHash.isNotBlank() && !file.contains("in=")) {
-                "$file&in=$addHash"
-            } else {
-                file
-            }
-            val videoUrl = if (fixedFile.startsWith("http")) fixedFile else "$mainUrl$fixedFile"
-            callback.invoke(
-                newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                    this.referer = "$mainUrl/"
-                    this.headers = mapOf("Cookie" to "hd=on; ott=nf; addhash=$addHash")
-                }
-            )
+        // Replace unknown hash with actual addhash
+        val fixedFile = if (addHash.isNotBlank() && file.contains("in=unknown")) {
+            file.replace(Regex("in=[^&]+"), "in=$addHash")
+        } else if (addHash.isNotBlank() && !file.contains("in=")) {
+            "$file&in=$addHash"
+        } else {
+            file
         }
-        return sources.isNotEmpty()
+        val videoUrl = if (fixedFile.startsWith("http")) fixedFile else "$mainUrl$fixedFile"
+        callback.invoke(
+            newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
+                this.referer = "$mainUrl/"
+                this.headers = mapOf("Cookie" to "hd=on; ott=nf; addhash=$addHash")
+            }
+        )
+        return true
     }
 
     @Suppress("ObjectLiteralToLambda")
