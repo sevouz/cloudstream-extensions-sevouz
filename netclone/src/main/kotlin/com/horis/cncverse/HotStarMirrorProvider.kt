@@ -225,22 +225,32 @@ class HotStarMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
-
-        if (response.video_link.isNullOrBlank()) return false
-
-        callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                this.referer = response.referer ?: apiBase
-            }
+        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "ott" to "hs",
+            "hd" to "on"
         )
+        val response = app.get(
+            "$mainUrl/mobile/hs/playlist.php?id=$id",
+            headers = headers,
+            cookies = cookies,
+            referer = "$mainUrl/home"
+        ).parsed<PlaylistResponse>()
 
-        return true
+        val sources = response.sources ?: return false
+        sources.forEach { source ->
+            val file = source.file ?: return@forEach
+            val videoUrl = if (file.startsWith("http")) file else "$mainUrl$file"
+            callback.invoke(
+                newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
+                    this.referer = "$mainUrl/"
+                    this.headers = mapOf("Cookie" to "hd=on")
+                }
+            )
+        }
+        return sources.isNotEmpty()
     }
 
     @Suppress("ObjectLiteralToLambda")

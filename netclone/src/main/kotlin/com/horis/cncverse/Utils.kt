@@ -225,3 +225,15 @@ data class NewTvPlayerResponse(
     val video_link: String? = null,
     val referer: String? = null
 )
+
+data class PlaylistResponse(
+    val title: String? = null,
+    val image2: String? = null,
+    val sources: List<PlaylistSource>? = null
+)
+
+data class PlaylistSource(
+    val file: String? = null,
+    val label: String? = null,
+    val type: String? = null
+)
