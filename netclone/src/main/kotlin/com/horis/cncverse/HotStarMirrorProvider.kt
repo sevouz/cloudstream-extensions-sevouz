@@ -225,23 +225,57 @@ class HotStarMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val responseText = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
-        ).text
-        val response = parseJson<NewTvPlayerResponse>(responseText)
-
-        if (response.video_link.isNullOrBlank()) return false
-
-        callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                this.referer = response.referer ?: apiBase
-            }
+        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        val cookies = mapOf(
+            "t_hash_t" to cookie_value,
+            "hd" to "on",
+            "ott" to "hs"
         )
 
-        return true
+        // Step 1: Get addhash from verify2 page
+        val verifyDoc = app.get(
+            "$mainUrl/mobile/verify2.php",
+            headers = headers,
+            cookies = cookies,
+            referer = "$mainUrl/mobile/home"
+        ).document
+        val addHash = verifyDoc.selectFirst("body")?.attr("data-addhash") ?: ""
+
+        // Step 2: Get playlist
+        val responseText = app.get(
+            "$mainUrl/mobile/hs/playlist.php?id=$id",
+            headers = headers,
+            cookies = cookies,
+            referer = "$mainUrl/mobile/home"
+        ).text
+
+        val responseList = try {
+            parseJson<List<PlaylistResponse>>(responseText)
+        } catch (_: Exception) {
+            try { listOf(parseJson<PlaylistResponse>(responseText)) } catch (_: Exception) { return false }
+        }
+        val response = responseList.firstOrNull() ?: return false
+        val sources = response.sources ?: return false
+
+        sources.forEach { source ->
+            val file = source.file ?: return@forEach
+            val fixedFile = if (addHash.isNotBlank() && file.contains("in=unknown")) {
+                file.replace(Regex("in=[^&]+"), "in=$addHash")
+            } else if (addHash.isNotBlank() && !file.contains("in=")) {
+                "$file&in=$addHash"
+            } else {
+                file
+            }
+            val videoUrl = if (fixedFile.startsWith("http")) fixedFile else "$mainUrl$fixedFile"
+            callback.invoke(
+                newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
+                    this.referer = "$mainUrl/"
+                    this.headers = mapOf("Cookie" to "hd=on; ott=hs; t_hash_t=$cookie_value")
+                }
+            )
+        }
+        return sources.isNotEmpty()
     }
 
     @Suppress("ObjectLiteralToLambda")
