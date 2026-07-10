@@ -226,9 +226,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<LoadData>(data).id
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val cookies = mapOf(
-            "t_hash_t" to cookie_value,
             "hd" to "on",
             "ott" to "pv"
         )
@@ -271,7 +269,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
             callback.invoke(
                 newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
                     this.referer = "$mainUrl/"
-                    this.headers = mapOf("Cookie" to "hd=on; ott=pv; t_hash_t=$cookie_value")
+                    this.headers = mapOf("Cookie" to "hd=on; ott=pv")
                 }
             )
         }

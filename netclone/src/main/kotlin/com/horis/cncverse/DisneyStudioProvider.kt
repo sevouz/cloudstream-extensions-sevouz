@@ -216,8 +216,7 @@ open class DisneyStudioProvider(
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<LoadData>(data).id
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val cookies = buildCookies()
+        val cookies = buildCookies().toMutableMap().apply { remove("t_hash_t") }
 
         // Step 1: Get addhash from verify2 page
         val verifyDoc = app.get(
@@ -257,7 +256,7 @@ open class DisneyStudioProvider(
             callback.invoke(
                 newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
                     this.referer = "$mainUrl/"
-                    this.headers = mapOf("Cookie" to "hd=on; ott=hs; t_hash_t=$cookie_value")
+                    this.headers = mapOf("Cookie" to "hd=on; ott=hs")
                 }
             )
         }
