@@ -6,7 +6,6 @@ import com.fasterxml.jackson.core.json.JsonReadFeature
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.lagradost.nicehttp.ResponseParser
 import okhttp3.FormBody
 import android.content.Context
 import com.lagradost.api.Log
@@ -16,32 +15,16 @@ import okhttp3.Request
 import java.util.Base64
 import kotlin.reflect.KClass
 
-object JSONParser : ResponseParser {
+object JSONParser {
     val mapper: ObjectMapper = jacksonObjectMapper().configure(
         DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
     ).configure(
         JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
     )
 
-    override fun <T : Any> parse(text: String, kClass: KClass<T>): T {
+    fun <T : Any> parse(text: String, kClass: KClass<T>): T {
         return mapper.readValue(text, kClass.java)
     }
-
-    override fun <T : Any> parseSafe(text: String, kClass: KClass<T>): T? {
-        return try {
-            mapper.readValue(text, kClass.java)
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    override fun writeValueAsString(obj: Any): String {
-        return mapper.writeValueAsString(obj)
-    }
-}
-
-val cncApp = com.lagradost.nicehttp.Requests(responseParser = JSONParser).apply {
-    defaultHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36")
 }
 
 inline fun <reified T : Any> parseJson(text: String): T {
@@ -236,8 +219,8 @@ suspend fun getOrFetchAddHash(mainUrl: String, headers: Map<String, String>, coo
         return savedHash
     }
 
-    // Fetch fresh addhash using cncApp (maintains its own cookie jar)
-    val verifyResponse = cncApp.get(
+    // Fetch fresh addhash
+    val verifyResponse = app.get(
         "$mainUrl/mobile/verify2.php",
         headers = headers,
         cookies = cookies,
@@ -256,7 +239,7 @@ suspend fun getOrFetchAddHash(mainUrl: String, headers: Map<String, String>, coo
 }
 
 suspend fun getPlaylistFile(mainUrl: String, playlistPath: String, headers: Map<String, String>, cookies: Map<String, String>): String? {
-    val responseText = cncApp.get(
+    val responseText = app.get(
         "$mainUrl$playlistPath",
         headers = headers,
         cookies = cookies,
