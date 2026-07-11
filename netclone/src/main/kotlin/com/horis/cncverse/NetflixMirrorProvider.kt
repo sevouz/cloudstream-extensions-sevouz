@@ -260,8 +260,17 @@ class NetflixMirrorProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
+                val url = request.url.toString()
+                if (url.contains(".m3u8")) {
+                    // Replace in=unknown::ni with the correct addhash in sub-stream URLs
+                    val (savedHash, _) = NetflixMirrorStorage.getAddHash()
+                    val newUrl = if (!savedHash.isNullOrBlank() && url.contains("in=unknown")) {
+                        url.replace(Regex("in=unknown[^&]*"), "in=$savedHash")
+                    } else {
+                        url
+                    }
                     val newRequest = request.newBuilder()
+                        .url(newUrl)
                         .header("Cookie", "hd=on")
                         .build()
                     return chain.proceed(newRequest)
