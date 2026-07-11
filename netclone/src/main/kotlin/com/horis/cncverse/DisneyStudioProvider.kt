@@ -223,15 +223,7 @@ open class DisneyStudioProvider(
         val playlistCookies = baseCookies.toMutableMap()
         if (addHash.isNotBlank()) playlistCookies["addhash"] = addHash
 
-        val responseText = app.get(
-            "$mainUrl/mobile/hs/playlist.php?id=$id",
-            headers = headers,
-            cookies = playlistCookies,
-            referer = "$mainUrl/mobile/home"
-        ).text
-
-        val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(responseText)
-        val file = fileMatch?.groupValues?.get(1) ?: return false
+        val file = getPlaylistFile(mainUrl, "/mobile/hs/playlist.php?id=$id", headers, playlistCookies) ?: return false
 
         val fixedFile = if (addHash.isNotBlank() && file.contains("in=unknown")) {
             file.replace(Regex("in=[^&]+"), "in=$addHash")
@@ -241,10 +233,11 @@ open class DisneyStudioProvider(
             file
         }
         val videoUrl = if (fixedFile.startsWith("http")) fixedFile else "$mainUrl$fixedFile"
+        val playlistHeaders = mapOf("Cookie" to "hd=on; ott=hs; addhash=$addHash")
         callback.invoke(
             newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                this.referer = "$mainUrl/"
-                this.headers = mapOf("Cookie" to "hd=on; ott=hs; addhash=$addHash")
+                this.referer = "$mainUrl/mobile/home?app=1"
+                this.headers = playlistHeaders
             }
         )
         return true

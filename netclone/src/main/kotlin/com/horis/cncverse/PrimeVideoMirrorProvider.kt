@@ -226,25 +226,14 @@ class PrimeVideoMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<LoadData>(data).id
-        val baseCookies = mapOf(
-            "hd" to "on",
-            "ott" to "pv"
-        )
+        val baseCookies = mapOf("hd" to "on", "ott" to "pv")
 
         val addHash = getOrFetchAddHash(mainUrl, headers, baseCookies)
 
         val playlistCookies = baseCookies.toMutableMap()
         if (addHash.isNotBlank()) playlistCookies["addhash"] = addHash
 
-        val responseText = app.get(
-            "$mainUrl/mobile/pv/playlist.php?id=$id",
-            headers = headers,
-            cookies = playlistCookies,
-            referer = "$mainUrl/mobile/home"
-        ).text
-
-        val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(responseText)
-        val file = fileMatch?.groupValues?.get(1) ?: return false
+        val file = getPlaylistFile(mainUrl, "/mobile/pv/playlist.php?id=$id", headers, playlistCookies) ?: return false
 
         val fixedFile = if (addHash.isNotBlank() && file.contains("in=unknown")) {
             file.replace(Regex("in=[^&]+"), "in=$addHash")
@@ -254,10 +243,11 @@ class PrimeVideoMirrorProvider : MainAPI() {
             file
         }
         val videoUrl = if (fixedFile.startsWith("http")) fixedFile else "$mainUrl$fixedFile"
+        val playlistHeaders = mapOf("Cookie" to "hd=on; ott=pv; addhash=$addHash")
         callback.invoke(
             newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                this.referer = "$mainUrl/"
-                this.headers = mapOf("Cookie" to "hd=on; ott=pv; addhash=$addHash")
+                this.referer = "$mainUrl/mobile/home?app=1"
+                this.headers = playlistHeaders
             }
         )
         return true

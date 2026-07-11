@@ -226,30 +226,17 @@ class NetflixMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val id = parseJson<LoadData>(data).id
-        val baseCookies = mapOf(
-            "hd" to "on",
-            "ott" to "nf"
-        )
+        val baseCookies = mapOf("hd" to "on", "ott" to "nf")
 
-        // Get cached addhash (only fetches from server if expired)
+        // Get cached addhash (fetches from verify2.php if expired, uses cncApp for cookie persistence)
         val addHash = getOrFetchAddHash(mainUrl, headers, baseCookies)
 
-        // Get playlist with addhash cookie included
+        // Get playlist using cncApp (which has the addhash cookie in its jar from verify2 call)
         val playlistCookies = baseCookies.toMutableMap()
         if (addHash.isNotBlank()) playlistCookies["addhash"] = addHash
 
-        val responseText = app.get(
-            "$mainUrl/mobile/playlist.php?id=$id",
-            headers = headers,
-            cookies = playlistCookies,
-            referer = "$mainUrl/mobile/home"
-        ).text
+        val file = getPlaylistFile(mainUrl, "/mobile/playlist.php?id=$id", headers, playlistCookies) ?: return false
 
-        // Extract file URL using regex
-        val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(responseText)
-        val file = fileMatch?.groupValues?.get(1) ?: return false
-
-        // Replace unknown hash with actual addhash
         val fixedFile = if (addHash.isNotBlank() && file.contains("in=unknown")) {
             file.replace(Regex("in=[^&]+"), "in=$addHash")
         } else if (addHash.isNotBlank() && !file.contains("in=")) {
@@ -258,10 +245,11 @@ class NetflixMirrorProvider : MainAPI() {
             file
         }
         val videoUrl = if (fixedFile.startsWith("http")) fixedFile else "$mainUrl$fixedFile"
+        val playlistHeaders = mapOf("Cookie" to "hd=on; ott=nf; addhash=$addHash")
         callback.invoke(
             newExtractorLink(name, name, videoUrl, type = ExtractorLinkType.M3U8) {
-                this.referer = "$mainUrl/"
-                this.headers = mapOf("Cookie" to "hd=on; ott=nf; addhash=$addHash")
+                this.referer = "$mainUrl/mobile/home?app=1"
+                this.headers = playlistHeaders
             }
         )
         return true
