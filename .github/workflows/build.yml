@@ -60,7 +60,38 @@ jobs:
           chmod +x gradlew
           ./gradlew make makePluginsJson
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
-          cp build/plugins.json $GITHUB_WORKSPACE/builds
+          # Merge new plugins.json with existing RVE entry
+          if [ -f "$GITHUB_WORKSPACE/builds/plugins.json" ]; then
+            # Extract existing netclone entry before overwriting
+            python3 -c "
+          import json
+          try:
+              with open('$GITHUB_WORKSPACE/builds/plugins.json') as f:
+                  old = json.load(f)
+              netclone = [p for p in old if p.get('internalName') == 'netclone']
+              with open('/tmp/netclone_entry.json', 'w') as f:
+                  json.dump(netclone, f)
+          except:
+              with open('/tmp/netclone_entry.json', 'w') as f:
+                  json.dump([], f)
+          "
+          fi
+          cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins.json
+          # Re-add netclone entry if it existed
+          python3 -c "
+          import json
+          with open('$GITHUB_WORKSPACE/builds/plugins.json') as f:
+              plugins = json.load(f)
+          try:
+              with open('/tmp/netclone_entry.json') as f:
+                  netclone = json.load(f)
+              if netclone:
+                  plugins.extend(netclone)
+          except:
+              pass
+          with open('$GITHUB_WORKSPACE/builds/plugins.json', 'w') as f:
+              json.dump(plugins, f, indent=4)
+          "
           REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           cat > $GITHUB_WORKSPACE/builds/$REPO_NAME.json << EOF
           {
