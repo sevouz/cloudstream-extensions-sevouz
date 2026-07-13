@@ -1,0 +1,13 @@
+version = 1
+
+cloudstream {
+    language = "ta"
+    description = "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages"
+    authors = listOf("sevouz")
+    status = 1
+    tvTypes = listOf(
+        "Movie",
+        "TvSeries"
+    )
+    iconUrl = "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png"
+}
