@@ -7,6 +7,7 @@ import com.horis.cncverse.entities.SearchData
 import com.lagradost.cloudstream3.*
 
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import okhttp3.Headers
@@ -69,7 +70,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
             "ott" to "pv",
             "hd" to "on"
         )
-        val document = cncApp.get(
+        val document = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = cookies,
             headers = headers,
@@ -107,7 +108,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
             "ott" to "pv"
         )
         val url = "$mainUrl/mobile/pv/search.php?s=$query&t=${APIHolder.unixTime}"
-        val data = cncApp.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
+        val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).text.let { parseJson<SearchData>(it) }
 
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
@@ -126,12 +127,12 @@ class PrimeVideoMirrorProvider : MainAPI() {
             "hd" to "on",
             "ott" to "pv"
         )
-        val data = cncApp.get(
+        val data = app.get(
             "$mainUrl/mobile/pv/post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/home",
             cookies = cookies
-        ).parsed<PostData>()
+        ).text.let { parseJson<PostData>(it) }
 
         val episodes = arrayListOf<Episode>()
 
@@ -208,12 +209,12 @@ class PrimeVideoMirrorProvider : MainAPI() {
         )
         var pg = page
         while (true) {
-            val data = cncApp.get(
+            val data = app.get(
                 "$mainUrl/mobile/pv/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
                 headers,
                 referer = "$mainUrl/home",
                 cookies = cookies
-            ).parsed<EpisodesData>()
+            ).text.let { parseJson<EpisodesData>(it) }
             data.episodes?.mapTo(episodes) {
                 newEpisode(LoadData(title, it.id)) {
                     name = it.t
@@ -237,12 +238,12 @@ class PrimeVideoMirrorProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val response = cncApp.get(
+        val response = app.get(
             "$apiBase/newtv/player.php?id=$id",
             headers = buildNewTvHeaders("pv", mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        ).text.let { parseJson<NewTvPlayerResponse>(it) }
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response.video_link.isNullOrBlank()) return false
 
         callback.invoke(
             newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {

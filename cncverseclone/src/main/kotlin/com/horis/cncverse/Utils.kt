@@ -2,60 +2,12 @@ package com.horis.cncverse
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.fasterxml.jackson.core.json.JsonReadFeature
-import com.fasterxml.jackson.databind.DeserializationFeature
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.lagradost.cloudstream3.USER_AGENT
-import com.lagradost.nicehttp.Requests
-import com.lagradost.nicehttp.ResponseParser
-import kotlin.reflect.KClass
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import okhttp3.FormBody
-import android.content.Context
 import okhttp3.Request
 import java.util.UUID
 import java.util.Base64
-
-val JSONParser = object : ResponseParser {
-    val mapper: ObjectMapper = jacksonObjectMapper().configure(
-        DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
-    ).configure(
-        JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
-    )
-
-    override fun <T : Any> parse(text: String, kClass: KClass<T>): T {
-        return mapper.readValue(text, kClass.java)
-    }
-
-    override fun <T : Any> parseSafe(text: String, kClass: KClass<T>): T? {
-        return try {
-            mapper.readValue(text, kClass.java)
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    override fun writeValueAsString(obj: Any): String {
-        return mapper.writeValueAsString(obj)
-    }
-}
-
-val cncApp = Requests(responseParser = JSONParser).apply {
-    defaultHeaders = mapOf("User-Agent" to USER_AGENT)
-}
-
-inline fun <reified T : Any> parseJson(text: String): T {
-    return JSONParser.parse(text, T::class)
-}
-
-inline fun <reified T : Any> tryParseJson(text: String): T? {
-    return try {
-        return JSONParser.parseSafe(text, T::class)
-    } catch (e: Exception) {
-        e.printStackTrace()
-        null
-    }
-}
 
 fun convertRuntimeToMinutes(runtime: String): Int {
     var totalMinutes = 0
@@ -104,7 +56,7 @@ suspend fun bypass(mainUrl: String): String {
         val formBody = FormBody.Builder()
             .add("g-recaptcha-response", UUID.randomUUID().toString())
             .build()
-        val client = cncApp.baseClient.newBuilder()
+        val client = app.baseClient.newBuilder()
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
@@ -182,9 +134,9 @@ suspend fun resolveApiUrl(): String {
     for (encoded in newTvDomains) {
         val base = decodeBase64(encoded).trimEnd('/')
         try {
-            val response = cncApp.get("$base/checknewtv.php", headers = newTvBaseHeaders)
-                .parsed<NewTvTokenResponse>()
-            val tokenHash = response.token_hash
+            val response = app.get("$base/checknewtv.php", headers = newTvBaseHeaders).text
+            val tokenResponse = tryParseJson<NewTvTokenResponse>(response)
+            val tokenHash = tokenResponse?.token_hash
             if (!tokenHash.isNullOrBlank()) {
                 resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
                 return resolvedApiUrl

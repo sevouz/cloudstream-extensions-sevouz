@@ -6,6 +6,7 @@ import com.horis.cncverse.entities.PostData
 import com.lagradost.cloudstream3.*
 
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import org.jsoup.nodes.Element
@@ -75,7 +76,7 @@ open class DisneyStudioProvider(
         showTelegramPopup()
 
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val document = cncApp.get(
+        val document = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = buildCookies(),
             headers = headers,
@@ -108,12 +109,12 @@ open class DisneyStudioProvider(
         
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val id = parseJson<Id>(url).id
-        val data = cncApp.get(
+        val data = app.get(
             "$mainUrl/mobile/hs/post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/home",
             cookies = buildCookies()
-        ).parsed<PostData>()
+        ).text.let { parseJson<PostData>(it) }
 
         val episodes = arrayListOf<Episode>()
 
@@ -185,12 +186,12 @@ open class DisneyStudioProvider(
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
-            val data = cncApp.get(
+            val data = app.get(
                 "$mainUrl/mobile/hs/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
                 headers,
                 referer = "$mainUrl/home",
                 cookies = buildCookies()
-            ).parsed<EpisodesData>()
+            ).text.let { parseJson<EpisodesData>(it) }
             data.episodes?.mapTo(episodes) {
                 newEpisode(LoadData(title, it.id)) {
                     name = it.t
@@ -214,12 +215,12 @@ open class DisneyStudioProvider(
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val response = cncApp.get(
+        val response = app.get(
             "$apiBase/newtv/player.php?id=$id",
             headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        ).text.let { parseJson<NewTvPlayerResponse>(it) }
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response.video_link.isNullOrBlank()) return false
 
         callback.invoke(
             newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
