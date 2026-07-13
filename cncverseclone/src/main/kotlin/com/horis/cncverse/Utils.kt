@@ -1,59 +1,32 @@
 package com.horis.cncverse
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.core.json.JsonReadFeature
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.lagradost.cloudstream3.USER_AGENT
-import com.lagradost.nicehttp.Requests
-import com.lagradost.nicehttp.ResponseParser
 import kotlin.reflect.KClass
 import okhttp3.FormBody
-import kotlinx.coroutines.delay
 import android.content.Context
-import com.lagradost.api.Log
-import org.json.JSONObject
-import java.util.UUID
 import okhttp3.Request
+import java.util.UUID
 import java.util.Base64
 
-val JSONParser = object : ResponseParser {
-    val mapper: ObjectMapper = jacksonObjectMapper().configure(
-        DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
-    ).configure(
-        JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
-    )
-
-    override fun <T : Any> parse(text: String, kClass: KClass<T>): T {
-        return mapper.readValue(text, kClass.java)
-    }
-
-    override fun <T : Any> parseSafe(text: String, kClass: KClass<T>): T? {
-        return try {
-            mapper.readValue(text, kClass.java)
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    override fun writeValueAsString(obj: Any): String {
-        return mapper.writeValueAsString(obj)
-    }
-}
-
-val app = Requests(responseParser = JSONParser).apply {
-    defaultHeaders = mapOf("User-Agent" to USER_AGENT)
-}
+val mapper: ObjectMapper = jacksonObjectMapper().configure(
+    DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
+).configure(
+    JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
+)
 
 inline fun <reified T : Any> parseJson(text: String): T {
-    return JSONParser.parse(text, T::class)
+    return mapper.readValue(text, T::class.java)
 }
 
 inline fun <reified T : Any> tryParseJson(text: String): T? {
     return try {
-        return JSONParser.parseSafe(text, T::class)
+        mapper.readValue(text, T::class.java)
     } catch (e: Exception) {
         e.printStackTrace()
         null
@@ -62,9 +35,7 @@ inline fun <reified T : Any> tryParseJson(text: String): T? {
 
 fun convertRuntimeToMinutes(runtime: String): Int {
     var totalMinutes = 0
-
     val parts = runtime.split(" ")
-
     for (part in parts) {
         when {
             part.endsWith("h") -> {
@@ -77,7 +48,6 @@ fun convertRuntimeToMinutes(runtime: String): Int {
             }
         }
     }
-
     return totalMinutes
 }
 
@@ -134,12 +104,10 @@ suspend fun bypass(mainUrl: String): String {
                 .orEmpty()
         }
     } catch (e: Exception) {
-        // Clear invalid cookie on failure
         NetflixMirrorStorage.clearCookie()
         throw e
     }
 
-    // Persist the new cookie
     if (newCookie.isNotEmpty()) {
         NetflixMirrorStorage.saveCookie(newCookie)
     }
@@ -194,8 +162,8 @@ suspend fun resolveApiUrl(): String {
         val base = decodeBase64(encoded).trimEnd('/')
         try {
             val response = app.get("$base/checknewtv.php", headers = newTvBaseHeaders)
-                .parsed<NewTvTokenResponse>()
-            val tokenHash = response.token_hash
+            val tokenResponse = parseJson<NewTvTokenResponse>(response.text)
+            val tokenHash = tokenResponse.token_hash
             if (!tokenHash.isNullOrBlank()) {
                 resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
                 return resolvedApiUrl
