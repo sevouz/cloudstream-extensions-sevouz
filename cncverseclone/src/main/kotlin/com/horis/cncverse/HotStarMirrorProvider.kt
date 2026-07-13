@@ -5,7 +5,7 @@ import com.horis.cncverse.entities.EpisodesData
 import com.horis.cncverse.entities.PostData
 import com.horis.cncverse.entities.SearchData
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.app
+
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -69,7 +69,7 @@ class HotStarMirrorProvider : MainAPI() {
             "ott" to "hs",
             "hd" to "on"
         )
-        val document = app.get(
+        val document = cncApp.get(
             "$mainUrl/mobile/home?app=1",
             cookies = cookies,
             headers = headers,
@@ -107,7 +107,7 @@ class HotStarMirrorProvider : MainAPI() {
             "ott" to "hs"
         )
         val url = "$mainUrl/mobile/hs/search.php?s=$query&t=${APIHolder.unixTime}"
-        val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
+        val data = cncApp.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
 
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
@@ -126,7 +126,7 @@ class HotStarMirrorProvider : MainAPI() {
             "hd" to "on",
             "ott" to "hs"
         )
-        val data = app.get(
+        val data = cncApp.get(
             "$mainUrl/mobile/hs/post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/home",
@@ -208,7 +208,7 @@ class HotStarMirrorProvider : MainAPI() {
         )
         var pg = page
         while (true) {
-            val data = app.get(
+            val data = cncApp.get(
                 "$mainUrl/mobile/hs/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
                 headers,
                 referer = "$mainUrl/home",
@@ -237,12 +237,12 @@ class HotStarMirrorProvider : MainAPI() {
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val response = app.get(
+        val response = cncApp.get(
             "$apiBase/newtv/player.php?id=$id",
             headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
-        if (response.video_link.isNullOrBlank()) return false
+        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
 
         callback.invoke(
             newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {

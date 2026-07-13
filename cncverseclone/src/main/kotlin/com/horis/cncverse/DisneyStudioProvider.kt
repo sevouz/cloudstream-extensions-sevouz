@@ -4,7 +4,7 @@ import android.content.Context
 import com.horis.cncverse.entities.EpisodesData
 import com.horis.cncverse.entities.PostData
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.app
+
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -75,7 +75,7 @@ open class DisneyStudioProvider(
         showTelegramPopup()
 
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val document = app.get(
+        val document = cncApp.get(
             "$mainUrl/mobile/home?app=1",
             cookies = buildCookies(),
             headers = headers,
@@ -108,7 +108,7 @@ open class DisneyStudioProvider(
         
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val id = parseJson<Id>(url).id
-        val data = app.get(
+        val data = cncApp.get(
             "$mainUrl/mobile/hs/post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/home",
@@ -185,7 +185,7 @@ open class DisneyStudioProvider(
         val episodes = arrayListOf<Episode>()
         var pg = page
         while (true) {
-            val data = app.get(
+            val data = cncApp.get(
                 "$mainUrl/mobile/hs/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
                 headers,
                 referer = "$mainUrl/home",
@@ -214,12 +214,12 @@ open class DisneyStudioProvider(
     ): Boolean {
         val apiBase = resolveApiUrl()
         val id = parseJson<LoadData>(data).id
-        val response = app.get(
+        val response = cncApp.get(
             "$apiBase/newtv/player.php?id=$id",
             headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
-        if (response.video_link.isNullOrBlank()) return false
+        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
 
         callback.invoke(
             newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
