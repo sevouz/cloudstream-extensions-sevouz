@@ -1,16 +1,13 @@
 rootProject.name = "OTTCLONES"
 
-// netclone is manually managed (patched binary on builds branch)
-// include("netclone")
-include("rve")
+// rve is manually managed (patched binary on builds branch) - source kept for reference only
+// include("rve")
 include("animepaheclone")
 include("animesaltclone")
 include("animedekhoclone")
 include("movieboxinclone")
 include("anizoneclone")
 include("multimoviesclone")
-// netmirrorclone removed (conflicts with RVE/netclone same package)
-// include("netmirrorclone")
 include("anikotoclone")
 include("anidbclone")
 include("aninekoClone")
