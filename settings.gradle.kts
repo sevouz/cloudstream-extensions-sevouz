@@ -2,6 +2,7 @@ rootProject.name = "OTTCLONES"
 
 // netclone is manually managed (patched binary on builds branch)
 // include("netclone")
+include("rve")
 include("animepaheclone")
 include("animesaltclone")
 include("animedekhoclone")
