@@ -1,5 +1,11 @@
 version = 1
 
+android {
+    buildFeatures {
+        buildConfig = true
+    }
+}
+
 cloudstream {
     language = "ta"
     description = "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages"
