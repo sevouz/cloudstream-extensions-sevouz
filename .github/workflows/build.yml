@@ -30,7 +30,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/builds
           for f in *.cs3; do
-            if [ "$f" != "rve.cs3" ]; then
+            if [ "$f" != "rve.cs3" ] && [ "$f" != "cncverseclone.cs3" ]; then
               rm -f "$f"
             fi
           done
@@ -66,7 +66,7 @@ jobs:
           try:
               with open('$GITHUB_WORKSPACE/builds/plugins.json') as f:
                   old = json.load(f)
-              rve = [p for p in old if p.get('internalName') == 'rve']
+              rve = [p for p in old if p.get('internalName') in ('rve', 'cncverseclone')]
               with open('/tmp/rve_entry.json', 'w') as f:
                   json.dump(rve, f)
           except:
@@ -75,8 +75,10 @@ jobs:
           "
           fi
           cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins.json
+          # Download CNC Verse .cs3 from NivinCNC builds
+          curl -sL "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/CNC%20Verse.cs3" -o "$GITHUB_WORKSPACE/builds/cncverseclone.cs3"
           python3 -c "
-          import json
+          import json, hashlib
           with open('$GITHUB_WORKSPACE/builds/plugins.json') as f:
               plugins = json.load(f)
           try:
@@ -86,6 +88,32 @@ jobs:
                   plugins.extend(rve)
           except:
               pass
+          # Add/update cncverseclone entry from downloaded .cs3
+          cs3_path = '$GITHUB_WORKSPACE/builds/cncverseclone.cs3'
+          with open(cs3_path, 'rb') as f:
+              file_data = f.read()
+          file_hash = 'sha256-' + hashlib.sha256(file_data).hexdigest()
+          file_size = len(file_data)
+          # Remove old cncverseclone entry if exists
+          plugins = [p for p in plugins if p.get('internalName') != 'cncverseclone']
+          import os
+          repo = os.environ.get('GITHUB_REPOSITORY', 'sevouz/cloudstream-extensions-sevouz')
+          plugins.append({
+              'iconUrl': 'https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png',
+              'fileHash': file_hash,
+              'apiVersion': 1,
+              'repositoryUrl': f'https://github.com/{repo}',
+              'fileSize': file_size,
+              'status': 1,
+              'language': 'ta',
+              'authors': ['sevouz'],
+              'tvTypes': ['Movie', 'TvSeries'],
+              'version': 97,
+              'internalName': 'cncverseclone',
+              'description': 'Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages',
+              'url': f'https://raw.githubusercontent.com/{repo}/builds/cncverseclone.cs3',
+              'name': 'CNC Verse Clone'
+          })
           with open('$GITHUB_WORKSPACE/builds/plugins.json', 'w') as f:
               json.dump(plugins, f, indent=4)
           "
