@@ -26,7 +26,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     private var cookieValue = ""
 
     private suspend fun getCookie(): String {
-        if (cookieValue.isEmpty()) cookieValue = getBypassCookie()
+        if (cookieValue.isEmpty()) cookieValue = ensureBypass().cookie
         return cookieValue
     }
 
