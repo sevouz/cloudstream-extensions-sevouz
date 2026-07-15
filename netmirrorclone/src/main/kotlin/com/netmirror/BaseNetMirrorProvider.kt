@@ -168,8 +168,14 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
         return Interceptor { chain ->
             val req = chain.request()
-            if (req.url.toString().contains(".m3u8")) {
-                chain.proceed(req.newBuilder().header("Cookie", "hd=on").build())
+            val url = req.url.toString()
+            if (url.contains(".m3u8") || url.contains("/mobile/hls/")) {
+                val bypass = cachedBypass
+                val cookieStr = if (bypass != null && bypass.cookie.isNotEmpty()) {
+                    "t_hash_t=${bypass.cookie}; hd=on; ott=$ott" +
+                        if (bypass.addhash.isNotEmpty()) "; addhash=${bypass.addhash}" else ""
+                } else "hd=on"
+                chain.proceed(req.newBuilder().header("Cookie", cookieStr).build())
             } else chain.proceed(req)
         }
     }

@@ -28,7 +28,7 @@ val BROWSER_HEADERS = mapOf(
 
 data class BypassResult(val cookie: String, val addhash: String)
 
-@Volatile private var cachedBypass: BypassResult? = null
+@Volatile var cachedBypass: BypassResult? = null
 @Volatile private var cachedBypassTime: Long = 0L
 
 suspend fun ensureBypass(): BypassResult {
@@ -103,29 +103,30 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Stri
         cookies = cookies
     ).text
 
-    // Try JSON array format: [{"sources":[{"file":"url"}]}]
+    // Pattern 1: relative /mobile/hls/ path (what MirrorVerse uses)
+    val hlsMatch = Regex("""(/mobile/hls/[^\s"']+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
+    if (!hlsMatch.isNullOrBlank()) return "$MAIN_URL$hlsMatch"
+
+    // Pattern 2: full https m3u8 URL
+    val fullUrl = Regex("""(https?://[^\s"'<>\}\]\\]+\.m3u8[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
+    if (!fullUrl.isNullOrBlank()) return fullUrl
+
+    // Pattern 3: JSON "file" field
+    val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(response)?.groupValues?.get(1)
+    if (!fileMatch.isNullOrBlank()) {
+        return if (fileMatch.startsWith("http")) fileMatch
+        else if (fileMatch.startsWith("/")) "$MAIN_URL$fileMatch"
+        else null
+    }
+
+    // Pattern 4: JSON array/object parse
     try {
         val playlist = tryParseJson<List<PlayListItem>>(response)
         val file = playlist?.firstOrNull()?.sources?.firstOrNull()?.file
-        if (!file.isNullOrBlank() && (file.contains(".m3u8") || file.contains(".mp4") || file.startsWith("http"))) {
-            return file
+        if (!file.isNullOrBlank()) {
+            return if (file.startsWith("http")) file else "$MAIN_URL$file"
         }
     } catch (_: Exception) {}
-
-    // Try single object format: {"sources":[{"file":"url"}]}
-    try {
-        val item = tryParseJson<PlayListItem>(response)
-        val file = item?.sources?.firstOrNull()?.file
-        if (!file.isNullOrBlank() && file.startsWith("http")) return file
-    } catch (_: Exception) {}
-
-    // Regex fallback - find any m3u8 or mp4 URL
-    val urlMatch = Regex("""(https?://[^\s"'<>\}\]\\]+\.(m3u8|mp4)[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
-    if (!urlMatch.isNullOrBlank()) return urlMatch
-
-    // Last resort - find "file":"url" pattern
-    val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(response)?.groupValues?.get(1)
-    if (!fileMatch.isNullOrBlank() && fileMatch.startsWith("http")) return fileMatch
 
     return null
 }
