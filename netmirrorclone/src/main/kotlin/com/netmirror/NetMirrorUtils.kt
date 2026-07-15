@@ -103,14 +103,29 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Stri
         cookies = cookies
     ).text
 
-    val m3u8 = Regex("""https?://[^\s"'\]\}\\]+\.m3u8[^\s"'\]\}\\]*""").find(response)?.value
-    if (!m3u8.isNullOrBlank()) return m3u8
-
+    // Try JSON array format: [{"sources":[{"file":"url"}]}]
     try {
         val playlist = tryParseJson<List<PlayListItem>>(response)
         val file = playlist?.firstOrNull()?.sources?.firstOrNull()?.file
-        if (!file.isNullOrBlank()) return file
+        if (!file.isNullOrBlank() && (file.contains(".m3u8") || file.contains(".mp4") || file.startsWith("http"))) {
+            return file
+        }
     } catch (_: Exception) {}
+
+    // Try single object format: {"sources":[{"file":"url"}]}
+    try {
+        val item = tryParseJson<PlayListItem>(response)
+        val file = item?.sources?.firstOrNull()?.file
+        if (!file.isNullOrBlank() && file.startsWith("http")) return file
+    } catch (_: Exception) {}
+
+    // Regex fallback - find any m3u8 or mp4 URL
+    val urlMatch = Regex("""(https?://[^\s"'<>\}\]\\]+\.(m3u8|mp4)[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
+    if (!urlMatch.isNullOrBlank()) return urlMatch
+
+    // Last resort - find "file":"url" pattern
+    val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(response)?.groupValues?.get(1)
+    if (!fileMatch.isNullOrBlank() && fileMatch.startsWith("http")) return fileMatch
 
     return null
 }
