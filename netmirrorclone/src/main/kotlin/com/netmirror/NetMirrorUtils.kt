@@ -2,8 +2,6 @@ package com.netmirror
 
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import okhttp3.FormBody
-import okhttp3.Request
 import java.util.Base64
 import java.util.UUID
 
@@ -37,31 +35,30 @@ suspend fun ensureBypass(): BypassResult {
         return cached
     }
 
-    val client = app.baseClient.newBuilder()
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .build()
-
-    // Step 1: Get cookie from verify.php
-    val formBody = FormBody.Builder()
-        .add("g-recaptcha-response", UUID.randomUUID().toString())
-        .build()
-    val verifyRequest = Request.Builder()
-        .url("$MAIN_URL/verify.php")
-        .post(formBody)
-        .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-        .addHeader("Referer", "$MAIN_URL/verify2")
-        .addHeader("Origin", MAIN_URL)
-        .addHeader("Content-Type", "application/x-www-form-urlencoded")
-        .build()
-
-    val cookie = client.newCall(verifyRequest).execute().use { response ->
-        response.headers("Set-Cookie")
-            .firstOrNull { it.startsWith("t_hash_t=") }
+    // Step 1: Get cookie from verify.php using app.post
+    var cookie = ""
+    try {
+        val verifyResponse = app.post(
+            "$MAIN_URL/verify.php",
+            data = mapOf("g-recaptcha-response" to UUID.randomUUID().toString()),
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+                "Referer" to "$MAIN_URL/verify2",
+                "Origin" to MAIN_URL
+            ),
+            allowRedirects = false
+        )
+        cookie = verifyResponse.headers["set-cookie"]
+            ?.split(";")?.firstOrNull { it.trim().startsWith("t_hash_t=") }
             ?.substringAfter("t_hash_t=")
-            ?.substringBefore(";")
-            .orEmpty()
-    }
+            ?: verifyResponse.headers.values("set-cookie")
+                .firstOrNull { it.startsWith("t_hash_t=") }
+                ?.substringAfter("t_hash_t=")
+                ?.substringBefore(";")
+            ?: ""
+    } catch (_: Exception) { }
+
+    if (cookie.isEmpty()) return BypassResult("", "", "")
 
     // Step 2: Get addhash from verify2.php
     var addhash = ""
