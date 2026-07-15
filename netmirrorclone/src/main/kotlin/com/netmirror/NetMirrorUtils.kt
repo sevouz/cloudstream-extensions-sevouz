@@ -82,29 +82,32 @@ suspend fun ensureBypass(): BypassResult {
 
 suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): String? {
     val bypass = ensureBypass()
-    val cookieHeader = "t_hash_t=${bypass.cookie}; hd=on; ott=$ott"
-    val fullCookie = if (bypass.addhash.isNotEmpty()) "$cookieHeader; addhash=${bypass.addhash}" else cookieHeader
+    if (bypass.cookie.isEmpty()) return null
+
+    val cookies = mutableMapOf(
+        "t_hash_t" to bypass.cookie,
+        "hd" to "on",
+        "ott" to ott
+    )
+    if (bypass.addhash.isNotEmpty()) {
+        cookies["addhash"] = bypass.addhash
+    }
 
     val url = "$MAIN_URL/mobile/$playlistPath?id=$id"
     val response = app.get(
         url,
-        headers = mapOf(
-            "Cookie" to fullCookie,
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-            "Referer" to "$MAIN_URL/home",
-            "X-Requested-With" to "XMLHttpRequest"
-        )
+        headers = BROWSER_HEADERS,
+        referer = "$MAIN_URL/home",
+        cookies = cookies
     ).text
 
     // Extract m3u8 URL from response
-    val m3u8 = Regex("""https?://[^\s"'\]]+\.m3u8[^\s"'\]]*""").find(response)?.value
+    val m3u8 = Regex("""https?://[^\s"'\]\}]+\.m3u8[^\s"'\]\}]*""").find(response)?.value
     if (m3u8 != null) return m3u8
 
     // Try parsing as JSON playlist
     val playlist = tryParseJson<List<PlayListItem>>(response)
     return playlist?.firstOrNull()?.sources?.firstOrNull()?.file
-
-    return null
 }
 
 // Also try NewTV API as fallback

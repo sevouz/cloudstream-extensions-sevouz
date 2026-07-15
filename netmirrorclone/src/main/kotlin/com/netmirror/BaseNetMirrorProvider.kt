@@ -161,8 +161,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val loadData = parseJson<LoadData>(data)
 
         // Primary: playlist.php with addhash (like MirrorVerse)
-        val m3u8 = getPlaylistLink(loadData.id, ott, playlistPath)
-            ?: getNewTvLink(loadData.id, ott) // Fallback: NewTV API
+        val m3u8 = try {
+            getPlaylistLink(loadData.id, ott, playlistPath)
+                ?: getNewTvLink(loadData.id, ott) // Fallback: NewTV API
+        } catch (_: Exception) { null }
 
         if (m3u8.isNullOrBlank()) return false
 
