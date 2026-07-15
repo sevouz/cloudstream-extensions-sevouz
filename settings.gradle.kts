@@ -15,4 +15,5 @@ include("castletvclone")
 include("anikageclone")
 include("hdhub4uclone")
 include("animesugeclone")
-include("netmirrorclone")
+// netmirrorclone built from binary
+// include("netmirrorclone")
