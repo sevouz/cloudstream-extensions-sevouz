@@ -3,6 +3,9 @@ package com.netmirror
 import android.util.Base64
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.util.UUID
 
 const val MAIN_URL = "https://net52.cc"
@@ -35,28 +38,32 @@ suspend fun ensureBypass(): BypassResult {
     }
 
     var cookie = ""
-    for (attempt in 1..3) {
-        try {
-            val resp = app.post(
-                "$MAIN_URL/verify.php",
-                data = mapOf("g-recaptcha-response" to UUID.randomUUID().toString()),
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-                    "Referer" to "$MAIN_URL/verify2",
-                    "Origin" to MAIN_URL
-                )
-            )
-            cookie = resp.cookies["t_hash_t"] ?: ""
-            if (cookie.isEmpty()) {
-                resp.okhttpResponse.headers("Set-Cookie").forEach { h ->
-                    if (h.contains("t_hash_t=")) {
-                        cookie = h.substringAfter("t_hash_t=").substringBefore(";")
-                    }
-                }
+    try {
+        val client = OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+
+        val formBody = FormBody.Builder()
+            .add("g-recaptcha-response", UUID.randomUUID().toString())
+            .build()
+
+        val request = Request.Builder()
+            .url("$MAIN_URL/verify.php")
+            .post(formBody)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+            .header("Referer", "$MAIN_URL/verify2")
+            .header("Origin", MAIN_URL)
+            .build()
+
+        val response = client.newCall(request).execute()
+        response.headers("Set-Cookie").forEach { h ->
+            if (h.contains("t_hash_t=")) {
+                cookie = h.substringAfter("t_hash_t=").substringBefore(";")
             }
-            if (cookie.isNotEmpty()) break
-        } catch (_: Exception) {}
-    }
+        }
+        response.close()
+    } catch (_: Exception) {}
 
     if (cookie.isEmpty()) return BypassResult("", "")
 
