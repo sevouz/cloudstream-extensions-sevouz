@@ -1,8 +1,8 @@
 package com.netmirror
 
+import android.util.Base64
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import java.util.Base64
 import java.util.UUID
 
 const val MAIN_URL = "https://net52.cc"
@@ -23,9 +23,8 @@ val BROWSER_HEADERS = mapOf(
     "X-Requested-With" to "XMLHttpRequest"
 )
 
-data class BypassResult(val cookie: String, val addhash: String, val usertoken: String)
+data class BypassResult(val cookie: String, val addhash: String)
 
-// Cached bypass data
 @Volatile private var cachedBypass: BypassResult? = null
 @Volatile private var cachedBypassTime: Long = 0L
 
@@ -35,43 +34,43 @@ suspend fun ensureBypass(): BypassResult {
         return cached
     }
 
-    // Step 1: Get cookie from verify.php using app.post
+    // Step 1: POST to verify.php to get t_hash_t cookie
     var cookie = ""
     try {
-        val verifyResponse = app.post(
+        val resp = app.post(
             "$MAIN_URL/verify.php",
             data = mapOf("g-recaptcha-response" to UUID.randomUUID().toString()),
             headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-                "Referer" to "$MAIN_URL/verify2",
-                "Origin" to MAIN_URL
-            ),
-            allowRedirects = false
+                "Referer" to "$MAIN_URL/verify2"
+            )
         )
-        cookie = verifyResponse.headers["set-cookie"]
-            ?.split(";")?.firstOrNull { it.trim().startsWith("t_hash_t=") }
-            ?.substringAfter("t_hash_t=")
-            ?: verifyResponse.headers.values("set-cookie")
-                .firstOrNull { it.startsWith("t_hash_t=") }
-                ?.substringAfter("t_hash_t=")
-                ?.substringBefore(";")
-            ?: ""
-    } catch (_: Exception) { }
+        // Extract cookie from response cookies or headers
+        cookie = resp.cookies["t_hash_t"] ?: ""
+        if (cookie.isEmpty()) {
+            // Try from okhttpResponse
+            resp.okhttpResponse.headers("Set-Cookie").forEach { h ->
+                if (h.startsWith("t_hash_t=")) {
+                    cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+                }
+            }
+        }
+    } catch (_: Exception) {}
 
-    if (cookie.isEmpty()) return BypassResult("", "", "")
+    if (cookie.isEmpty()) return BypassResult("", "")
 
-    // Step 2: Get addhash from verify2.php
+    // Step 2: GET verify2.php to extract addhash
     var addhash = ""
     try {
-        val verify2Doc = app.get(
+        val doc = app.get(
             "$MAIN_URL/mobile/verify2.php",
             headers = BROWSER_HEADERS,
             cookies = mapOf("t_hash_t" to cookie, "hd" to "on")
         ).document
-        addhash = verify2Doc.selectFirst("[data-addhash]")?.attr("data-addhash") ?: ""
-    } catch (_: Exception) { }
+        addhash = doc.selectFirst("[data-addhash]")?.attr("data-addhash") ?: ""
+    } catch (_: Exception) {}
 
-    val result = BypassResult(cookie = cookie, addhash = addhash, usertoken = "")
+    val result = BypassResult(cookie, addhash)
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
     return result
@@ -90,24 +89,28 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Stri
         cookies["addhash"] = bypass.addhash
     }
 
-    val url = "$MAIN_URL/mobile/$playlistPath?id=$id"
     val response = app.get(
-        url,
+        "$MAIN_URL/mobile/$playlistPath?id=$id",
         headers = BROWSER_HEADERS,
         referer = "$MAIN_URL/home",
         cookies = cookies
     ).text
 
     // Extract m3u8 URL from response
-    val m3u8 = Regex("""https?://[^\s"'\]\}]+\.m3u8[^\s"'\]\}]*""").find(response)?.value
-    if (m3u8 != null) return m3u8
+    val m3u8 = Regex("""https?://[^\s"'\]\}\\]+\.m3u8[^\s"'\]\}\\]*""").find(response)?.value
+    if (!m3u8.isNullOrBlank()) return m3u8
 
-    // Try parsing as JSON playlist
-    val playlist = tryParseJson<List<PlayListItem>>(response)
-    return playlist?.firstOrNull()?.sources?.firstOrNull()?.file
+    // Try JSON playlist format
+    try {
+        val playlist = tryParseJson<List<PlayListItem>>(response)
+        val file = playlist?.firstOrNull()?.sources?.firstOrNull()?.file
+        if (!file.isNullOrBlank()) return file
+    } catch (_: Exception) {}
+
+    return null
 }
 
-// Also try NewTV API as fallback
+// NewTV API fallback
 private val NEWTV_HEADERS = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma" to "no-cache",
@@ -144,7 +147,7 @@ private val NEWTV_DOMAINS = listOf(
     "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo="
 )
 
-private fun b64(s: String): String = String(Base64.getDecoder().decode(s))
+private fun b64(s: String): String = String(Base64.decode(s, Base64.DEFAULT))
 
 @Volatile private var resolvedApiUrl: String = ""
 
@@ -159,17 +162,17 @@ suspend fun resolveNewTvApi(): String {
                 resolvedApiUrl = b64(hash).trimEnd('/')
                 return resolvedApiUrl
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {}
     }
-    throw Exception("Failed to resolve NewTV API")
+    return ""
 }
 
 suspend fun getNewTvLink(id: String, ott: String): String? {
     val apiBase = resolveNewTvApi()
-    val bypass = ensureBypass()
+    if (apiBase.isEmpty()) return null
     val headers = NEWTV_HEADERS.toMutableMap().apply {
         put("Ott", ott)
-        put("Usertoken", bypass.usertoken)
+        put("Usertoken", "")
     }
     val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
     val response = tryParseJson<PlayerResponse>(text)
