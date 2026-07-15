@@ -26,13 +26,19 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     private var cookieValue = ""
 
     private suspend fun getCookie(): String {
-        if (cookieValue.isEmpty()) cookieValue = ensureBypass().cookie
+        if (cookieValue.isEmpty()) {
+            try {
+                cookieValue = ensureBypass().cookie
+            } catch (_: Exception) {}
+        }
         return cookieValue
     }
 
-    private fun buildCookies(cookie: String): Map<String, String> = mapOf(
-        "t_hash_t" to cookie, "ott" to ott, "hd" to "on"
-    )
+    private fun buildCookies(cookie: String): Map<String, String> {
+        val cookies = mutableMapOf("ott" to ott, "hd" to "on")
+        if (cookie.isNotEmpty()) cookies["t_hash_t"] = cookie
+        return cookies
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val cookie = getCookie()
@@ -42,7 +48,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             headers = BROWSER_HEADERS,
             referer = "$mainUrl/mobile/home?app=1"
         ).document
-        val items = doc.select(".tray-container, #top10").map { it.toHomePageList() }
+        val items = doc.select(".tray-container, #top10").mapNotNull {
+            val list = it.toHomePageList()
+            if (list.list.isEmpty()) null else list
+        }
         return newHomePageResponse(items, false)
     }
 

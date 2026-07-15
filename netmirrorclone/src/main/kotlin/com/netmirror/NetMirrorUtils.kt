@@ -30,36 +30,36 @@ data class BypassResult(val cookie: String, val addhash: String)
 
 suspend fun ensureBypass(): BypassResult {
     val cached = cachedBypass
-    if (cached != null && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
+    if (cached != null && cached.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
         return cached
     }
 
-    // Step 1: POST to verify.php to get t_hash_t cookie
     var cookie = ""
-    try {
-        val resp = app.post(
-            "$MAIN_URL/verify.php",
-            data = mapOf("g-recaptcha-response" to UUID.randomUUID().toString()),
-            headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-                "Referer" to "$MAIN_URL/verify2"
+    for (attempt in 1..3) {
+        try {
+            val resp = app.post(
+                "$MAIN_URL/verify.php",
+                data = mapOf("g-recaptcha-response" to UUID.randomUUID().toString()),
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+                    "Referer" to "$MAIN_URL/verify2",
+                    "Origin" to MAIN_URL
+                )
             )
-        )
-        // Extract cookie from response cookies or headers
-        cookie = resp.cookies["t_hash_t"] ?: ""
-        if (cookie.isEmpty()) {
-            // Try from okhttpResponse
-            resp.okhttpResponse.headers("Set-Cookie").forEach { h ->
-                if (h.startsWith("t_hash_t=")) {
-                    cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+            cookie = resp.cookies["t_hash_t"] ?: ""
+            if (cookie.isEmpty()) {
+                resp.okhttpResponse.headers("Set-Cookie").forEach { h ->
+                    if (h.contains("t_hash_t=")) {
+                        cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+                    }
                 }
             }
-        }
-    } catch (_: Exception) {}
+            if (cookie.isNotEmpty()) break
+        } catch (_: Exception) {}
+    }
 
     if (cookie.isEmpty()) return BypassResult("", "")
 
-    // Step 2: GET verify2.php to extract addhash
     var addhash = ""
     try {
         val doc = app.get(
@@ -96,11 +96,9 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Stri
         cookies = cookies
     ).text
 
-    // Extract m3u8 URL from response
     val m3u8 = Regex("""https?://[^\s"'\]\}\\]+\.m3u8[^\s"'\]\}\\]*""").find(response)?.value
     if (!m3u8.isNullOrBlank()) return m3u8
 
-    // Try JSON playlist format
     try {
         val playlist = tryParseJson<List<PlayListItem>>(response)
         val file = playlist?.firstOrNull()?.sources?.firstOrNull()?.file
@@ -110,7 +108,6 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Stri
     return null
 }
 
-// NewTV API fallback
 private val NEWTV_HEADERS = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma" to "no-cache",
@@ -184,7 +181,6 @@ data class PlayerResponse(val status: String? = null, val video_link: String? = 
 data class PlayListItem(val sources: List<Source>? = null, val tracks: List<Any>? = null, val title: String? = null)
 data class Source(val file: String? = null, val label: String? = null, val type: String? = null)
 
-// API data models
 data class SearchResult(val id: String, val t: String)
 data class SearchData(val head: String? = null, val searchResult: List<SearchResult> = emptyList(), val type: Int = 0)
 data class Suggest(val id: String)
