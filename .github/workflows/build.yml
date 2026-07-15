@@ -66,53 +66,26 @@ jobs:
           try:
               with open('$GITHUB_WORKSPACE/builds/plugins.json') as f:
                   old = json.load(f)
-              preserve = [p for p in old if p.get('internalName') in ('rve', 'netmirrorclone')]
+              rve = [p for p in old if p.get('internalName') == 'rve']
               with open('/tmp/rve_entry.json', 'w') as f:
-                  json.dump(preserve, f)
+                  json.dump(rve, f)
           except:
               with open('/tmp/rve_entry.json', 'w') as f:
                   json.dump([], f)
           "
           fi
           cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins.json
-          # Copy MirrorVerse binary as netmirrorclone
-          cp $GITHUB_WORKSPACE/src/netmirrorclone.cs3 $GITHUB_WORKSPACE/builds/netmirrorclone.cs3
           python3 -c "
-          import json, hashlib
+          import json
           with open('$GITHUB_WORKSPACE/builds/plugins.json') as f:
               plugins = json.load(f)
           try:
               with open('/tmp/rve_entry.json') as f:
-                  preserve = json.load(f)
-              # Only add rve back
-              rve = [p for p in preserve if p.get('internalName') == 'rve']
+                  rve = json.load(f)
               if rve:
                   plugins.extend(rve)
           except:
               pass
-          # Add netmirrorclone entry
-          cs3_path = '$GITHUB_WORKSPACE/builds/netmirrorclone.cs3'
-          with open(cs3_path, 'rb') as f:
-              data = f.read()
-          import os
-          repo = os.environ.get('GITHUB_REPOSITORY', 'sevouz/cloudstream-extensions-sevouz')
-          plugins = [p for p in plugins if p.get('internalName') != 'netmirrorclone']
-          plugins.append({
-              'iconUrl': 'https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png',
-              'fileHash': 'sha256-' + hashlib.sha256(data).hexdigest(),
-              'apiVersion': 1,
-              'repositoryUrl': f'https://github.com/{repo}',
-              'fileSize': len(data),
-              'status': 1,
-              'language': 'ta',
-              'authors': ['sevouz'],
-              'tvTypes': ['Movie', 'TvSeries'],
-              'version': 38,
-              'internalName': 'netmirrorclone',
-              'description': 'Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages',
-              'url': f'https://raw.githubusercontent.com/{repo}/builds/netmirrorclone.cs3',
-              'name': 'Nmirror'
-          })
           with open('$GITHUB_WORKSPACE/builds/plugins.json', 'w') as f:
               json.dump(plugins, f, indent=4)
           "

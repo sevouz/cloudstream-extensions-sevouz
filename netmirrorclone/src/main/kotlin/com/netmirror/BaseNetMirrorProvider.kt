@@ -23,45 +23,29 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val episodesPath: String
     abstract val playlistPath: String
 
-    private var cookieValue = ""
-
-    private suspend fun getCookie(): String {
-        if (cookieValue.isEmpty()) {
-            try {
-                cookieValue = ensureBypass().cookie
-            } catch (_: Exception) {}
-        }
-        return cookieValue
-    }
-
-    private fun buildCookies(cookie: String): Map<String, String> {
-        val cookies = mutableMapOf("ott" to ott, "hd" to "on")
-        if (cookie.isNotEmpty()) cookies["t_hash_t"] = cookie
-        return cookies
+    private suspend fun cookies(): Map<String, String> {
+        val bypass = ensureBypass()
+        val c = mutableMapOf("ott" to ott, "hd" to "on")
+        if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
+        return c
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val cookie = getCookie()
         val doc = app.get(
             "$mainUrl/mobile/home?app=1",
-            cookies = buildCookies(cookie),
+            cookies = cookies(),
             headers = BROWSER_HEADERS,
             referer = "$mainUrl/mobile/home?app=1"
         ).document
-        val items = doc.select(".tray-container, #top10").mapNotNull {
-            val list = it.toHomePageList()
-            if (list.list.isEmpty()) null else list
+        val items = doc.select(".tray-container, #top10").mapNotNull { section ->
+            val name = section.select("h2, span").text()
+            val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
+            if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
         }
         return newHomePageResponse(items, false)
     }
 
-    private fun Element.toHomePageList(): HomePageList {
-        val name = select("h2, span").text()
-        val items = select("article, .top10-post").mapNotNull { it.toSearchResult() }
-        return HomePageList(name, items, isHorizontalImages = false)
-    }
-
-    private fun Element.toSearchResult(): SearchResponse? {
+    private fun Element.toResult(): SearchResponse? {
         val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
         if (id.isBlank()) return null
         return newAnimeSearchResponse("", Id(id).toJson()) {
@@ -71,9 +55,11 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val cookie = getCookie()
-        val url = "$mainUrl/mobile/$searchPath?s=$query&t=$unixTime"
-        val text = app.get(url, referer = "$mainUrl/home", cookies = buildCookies(cookie)).text
+        val text = app.get(
+            "$mainUrl/mobile/$searchPath?s=$query&t=$unixTime",
+            referer = "$mainUrl/home",
+            cookies = cookies()
+        ).text
         val data = tryParseJson<SearchData>(text) ?: return emptyList()
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
@@ -84,20 +70,18 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val cookie = getCookie()
         val id = parseJson<Id>(url).id
         val text = app.get(
             "$mainUrl/mobile/$postPath?id=$id&t=$unixTime",
             headers = BROWSER_HEADERS,
             referer = "$mainUrl/home",
-            cookies = buildCookies(cookie)
+            cookies = cookies()
         ).text
         val data = tryParseJson<PostData>(text) ?: return null
 
         val episodes = arrayListOf<Episode>()
         val title = data.title
-        val castList = data.cast?.split(",")?.map { it.trim() } ?: emptyList()
-        val cast = castList.map { ActorData(Actor(it)) }
+        val cast = data.cast?.split(",")?.map { ActorData(Actor(it.trim())) } ?: emptyList()
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
@@ -117,10 +101,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                 }
             }
             if (data.nextPageShow == 1 && data.nextPageSeason != null) {
-                episodes.addAll(fetchEpisodes(title, url, data.nextPageSeason, 2, cookie))
+                episodes.addAll(fetchEps(title, url, data.nextPageSeason, 2))
             }
             data.season?.dropLast(1)?.forEach {
-                episodes.addAll(fetchEpisodes(title, url, it.id, 1, cookie))
+                episodes.addAll(fetchEps(title, url, it.id, 1))
             }
         }
 
@@ -137,18 +121,18 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         }
     }
 
-    private suspend fun fetchEpisodes(title: String, eid: String, sid: String, page: Int, cookie: String): List<Episode> {
-        val episodes = arrayListOf<Episode>()
+    private suspend fun fetchEps(title: String, eid: String, sid: String, page: Int): List<Episode> {
+        val eps = arrayListOf<Episode>()
         var pg = page
         while (true) {
             val text = app.get(
                 "$mainUrl/mobile/$episodesPath?s=$sid&series=$eid&t=$unixTime&page=$pg",
                 headers = BROWSER_HEADERS,
                 referer = "$mainUrl/home",
-                cookies = buildCookies(cookie)
+                cookies = cookies()
             ).text
             val data = tryParseJson<EpisodesData>(text) ?: break
-            data.episodes?.mapTo(episodes) {
+            data.episodes?.mapTo(eps) {
                 newEpisode(LoadData(title, it.id)) {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
@@ -158,7 +142,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             if (data.nextPageShow == 0) break
             pg++
         }
-        return episodes
+        return eps
     }
 
     override suspend fun loadLinks(
@@ -167,16 +151,12 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val loadData = parseJson<LoadData>(data)
-
-        // Primary: playlist.php with addhash (like MirrorVerse)
+        val ld = parseJson<LoadData>(data)
         val m3u8 = try {
-            getPlaylistLink(loadData.id, ott, playlistPath)
-                ?: getNewTvLink(loadData.id, ott) // Fallback: NewTV API
+            getPlaylistLink(ld.id, ott, playlistPath) ?: getNewTvLink(ld.id, ott)
         } catch (_: Exception) { null }
 
         if (m3u8.isNullOrBlank()) return false
-
         callback.invoke(
             newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
                 this.referer = MAIN_URL
@@ -185,18 +165,12 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         return true
     }
 
-    @Suppress("ObjectLiteralToLambda")
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    return chain.proceed(
-                        request.newBuilder().header("Cookie", "hd=on").build()
-                    )
-                }
-                return chain.proceed(request)
-            }
+        return Interceptor { chain ->
+            val req = chain.request()
+            if (req.url.toString().contains(".m3u8")) {
+                chain.proceed(req.newBuilder().header("Cookie", "hd=on").build())
+            } else chain.proceed(req)
         }
     }
 
