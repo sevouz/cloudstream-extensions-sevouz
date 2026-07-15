@@ -21,6 +21,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val searchPath: String
     abstract val postPath: String
     abstract val episodesPath: String
+    abstract val playlistPath: String
 
     private var cookieValue = ""
 
@@ -158,13 +159,16 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val loadData = parseJson<LoadData>(data)
-        val response = getVideoLink(loadData.id, ott) ?: return false
-        if (response.video_link.isNullOrBlank()) return false
 
-        val apiBase = resolveNewTvApi()
+        // Primary: playlist.php with addhash (like MirrorVerse)
+        val m3u8 = getPlaylistLink(loadData.id, ott, playlistPath)
+            ?: getNewTvLink(loadData.id, ott) // Fallback: NewTV API
+
+        if (m3u8.isNullOrBlank()) return false
+
         callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                this.referer = response.referer ?: apiBase
+            newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                this.referer = MAIN_URL
             }
         )
         return true

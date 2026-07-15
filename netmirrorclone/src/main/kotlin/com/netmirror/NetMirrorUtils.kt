@@ -12,7 +12,6 @@ const val MAIN_URL = "https://net52.cc"
 val BROWSER_HEADERS = mapOf(
     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-    "Cache-Control" to "max-age=0",
     "Connection" to "keep-alive",
     "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
     "sec-ch-ua-mobile" to "?0",
@@ -26,6 +25,89 @@ val BROWSER_HEADERS = mapOf(
     "X-Requested-With" to "XMLHttpRequest"
 )
 
+data class BypassResult(val cookie: String, val addhash: String, val usertoken: String)
+
+// Cached bypass data
+@Volatile private var cachedBypass: BypassResult? = null
+@Volatile private var cachedBypassTime: Long = 0L
+
+suspend fun ensureBypass(): BypassResult {
+    val cached = cachedBypass
+    if (cached != null && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
+        return cached
+    }
+
+    val client = app.baseClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    // Step 1: Get cookie from verify.php
+    val formBody = FormBody.Builder()
+        .add("g-recaptcha-response", UUID.randomUUID().toString())
+        .build()
+    val verifyRequest = Request.Builder()
+        .url("$MAIN_URL/verify.php")
+        .post(formBody)
+        .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+        .addHeader("Referer", "$MAIN_URL/verify2")
+        .addHeader("Origin", MAIN_URL)
+        .addHeader("Content-Type", "application/x-www-form-urlencoded")
+        .build()
+
+    val cookie = client.newCall(verifyRequest).execute().use { response ->
+        response.headers("Set-Cookie")
+            .firstOrNull { it.startsWith("t_hash_t=") }
+            ?.substringAfter("t_hash_t=")
+            ?.substringBefore(";")
+            .orEmpty()
+    }
+
+    // Step 2: Get addhash from verify2.php
+    var addhash = ""
+    try {
+        val verify2Doc = app.get(
+            "$MAIN_URL/mobile/verify2.php",
+            headers = BROWSER_HEADERS,
+            cookies = mapOf("t_hash_t" to cookie, "hd" to "on")
+        ).document
+        addhash = verify2Doc.selectFirst("[data-addhash]")?.attr("data-addhash") ?: ""
+    } catch (_: Exception) { }
+
+    val result = BypassResult(cookie = cookie, addhash = addhash, usertoken = "")
+    cachedBypass = result
+    cachedBypassTime = System.currentTimeMillis()
+    return result
+}
+
+suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): String? {
+    val bypass = ensureBypass()
+    val cookieHeader = "t_hash_t=${bypass.cookie}; hd=on; ott=$ott"
+    val fullCookie = if (bypass.addhash.isNotEmpty()) "$cookieHeader; addhash=${bypass.addhash}" else cookieHeader
+
+    val url = "$MAIN_URL/mobile/$playlistPath?id=$id"
+    val response = app.get(
+        url,
+        headers = mapOf(
+            "Cookie" to fullCookie,
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+            "Referer" to "$MAIN_URL/home",
+            "X-Requested-With" to "XMLHttpRequest"
+        )
+    ).text
+
+    // Extract m3u8 URL from response
+    val m3u8 = Regex("""https?://[^\s"'\]]+\.m3u8[^\s"'\]]*""").find(response)?.value
+    if (m3u8 != null) return m3u8
+
+    // Try parsing as JSON playlist
+    val playlist = tryParseJson<List<PlayListItem>>(response)
+    return playlist?.firstOrNull()?.sources?.firstOrNull()?.file
+
+    return null
+}
+
+// Also try NewTV API as fallback
 private val NEWTV_HEADERS = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
     "Pragma" to "no-cache",
@@ -62,45 +144,9 @@ private val NEWTV_DOMAINS = listOf(
     "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo="
 )
 
-// Cached cookie and API URL
-@Volatile private var cachedCookie: String = ""
-@Volatile private var cachedCookieTime: Long = 0L
-@Volatile private var resolvedApiUrl: String = ""
-
 private fun b64(s: String): String = String(Base64.getDecoder().decode(s))
 
-suspend fun getBypassCookie(): String {
-    if (cachedCookie.isNotEmpty() && System.currentTimeMillis() - cachedCookieTime < 54_000_000) {
-        return cachedCookie
-    }
-    val client = app.baseClient.newBuilder()
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .build()
-    val formBody = FormBody.Builder()
-        .add("g-recaptcha-response", UUID.randomUUID().toString())
-        .build()
-    val request = Request.Builder()
-        .url("$MAIN_URL/verify.php")
-        .post(formBody)
-        .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-        .addHeader("Referer", "$MAIN_URL/verify2")
-        .addHeader("Origin", MAIN_URL)
-        .addHeader("Content-Type", "application/x-www-form-urlencoded")
-        .build()
-    val cookie = client.newCall(request).execute().use { response ->
-        response.headers("Set-Cookie")
-            .firstOrNull { it.startsWith("t_hash_t=") }
-            ?.substringAfter("t_hash_t=")
-            ?.substringBefore(";")
-            .orEmpty()
-    }
-    if (cookie.isNotEmpty()) {
-        cachedCookie = cookie
-        cachedCookieTime = System.currentTimeMillis()
-    }
-    return cookie
-}
+@Volatile private var resolvedApiUrl: String = ""
 
 suspend fun resolveNewTvApi(): String {
     if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
@@ -118,18 +164,22 @@ suspend fun resolveNewTvApi(): String {
     throw Exception("Failed to resolve NewTV API")
 }
 
-suspend fun getVideoLink(id: String, ott: String): PlayerResponse? {
+suspend fun getNewTvLink(id: String, ott: String): String? {
     val apiBase = resolveNewTvApi()
+    val bypass = ensureBypass()
     val headers = NEWTV_HEADERS.toMutableMap().apply {
         put("Ott", ott)
-        put("Usertoken", "")
+        put("Usertoken", bypass.usertoken)
     }
     val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
-    return tryParseJson<PlayerResponse>(text)
+    val response = tryParseJson<PlayerResponse>(text)
+    return response?.video_link
 }
 
 data class TokenResponse(val token_hash: String? = null)
 data class PlayerResponse(val status: String? = null, val video_link: String? = null, val referer: String? = null)
+data class PlayListItem(val sources: List<Source>? = null, val tracks: List<Any>? = null, val title: String? = null)
+data class Source(val file: String? = null, val label: String? = null, val type: String? = null)
 
 // API data models
 data class SearchResult(val id: String, val t: String)

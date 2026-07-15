@@ -7,4 +7,5 @@ class PrimeVideoProvider : BaseNetMirrorProvider() {
     override val searchPath = "pv/search.php"
     override val postPath = "pv/post.php"
     override val episodesPath = "pv/episodes.php"
+    override val playlistPath = "pv/playlist.php"
 }

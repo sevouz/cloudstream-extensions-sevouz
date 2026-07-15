@@ -7,4 +7,5 @@ class NetflixProvider : BaseNetMirrorProvider() {
     override val searchPath = "search.php"
     override val postPath = "post.php"
     override val episodesPath = "episodes.php"
+    override val playlistPath = "playlist.php"
 }
