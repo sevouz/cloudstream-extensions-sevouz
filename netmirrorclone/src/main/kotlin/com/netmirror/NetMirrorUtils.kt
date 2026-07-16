@@ -118,7 +118,37 @@ suspend fun ensureBypass(): BypassResult {
     // Wait for ad to "complete" (25 seconds like MirrorVerse)
     kotlinx.coroutines.delay(25000)
 
-    val result = BypassResult(cookie, addhash, "", dataTime)
+    // Step 4: POST to verify2.php with addhash to confirm ad was watched
+    // Retry up to 10 times with 2-second delays
+    var usertoken = ""
+    var finalCookie = cookie
+    for (attempt in 1..10) {
+        kotlinx.coroutines.delay(2000)
+        try {
+            val verifyResp = app.post(
+                "$MAIN_URL/mobile/verify2.php",
+                data = mapOf("verify" to addhash),
+                headers = BROWSER_HEADERS,
+                referer = "$MAIN_URL/mobile/home?app=1"
+            )
+            // Extract updated cookie
+            val newCookie = verifyResp.cookies["t_hash_t"]
+            if (!newCookie.isNullOrBlank()) finalCookie = newCookie
+
+            val body = verifyResp.text
+            val json = tryParseJson<Map<String, String>>(body)
+            if (json != null) {
+                val status = json["statusup"] ?: ""
+                if (status.equals("All Done", ignoreCase = true)) {
+                    // Extract usertoken
+                    usertoken = json["usertoken"] ?: json["token"] ?: json["utoken"] ?: json["user_token"] ?: ""
+                    break
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    val result = BypassResult(finalCookie, addhash, usertoken, dataTime)
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
     return result
