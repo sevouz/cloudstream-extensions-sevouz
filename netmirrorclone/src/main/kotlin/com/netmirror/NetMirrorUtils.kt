@@ -115,8 +115,8 @@ suspend fun ensureBypass(): BypassResult {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    // Wait for ad to "complete" (25 seconds like MirrorVerse)
-    kotlinx.coroutines.delay(25000)
+    // Wait for ad to "complete" (try 15 seconds - faster than MirrorVerse's 25)
+    kotlinx.coroutines.delay(15000)
 
     // Step 4: POST to verify2.php with addhash to confirm ad was watched
     // Retry up to 10 times with 2-second delays
