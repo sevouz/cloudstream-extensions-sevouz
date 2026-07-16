@@ -206,7 +206,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     private fun getQualityFromLabel(label: String): Int {
         return when {
-            label.contains("4k", true) || label.contains("2160", true) -> Qualities.UHD4k.value
+            label.contains("4k", true) || label.contains("2160", true) -> Qualities.P2160.value
             label.contains("1080", true) -> Qualities.P1080.value
             label.contains("720", true) -> Qualities.P720.value
             label.contains("480", true) -> Qualities.P480.value
