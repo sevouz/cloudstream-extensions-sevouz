@@ -215,7 +215,21 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     private val cloudflareKiller by lazy { CloudflareKiller() }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
-        return cloudflareKiller
+        return Interceptor { chain ->
+            val req = chain.request()
+            val bypass = cachedBypass
+            if (bypass != null && bypass.cookie.isNotEmpty()) {
+                val cookieParts = mutableListOf("t_hash_t=${bypass.cookie}", "hd=on", "ott=$ott")
+                if (bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
+                if (bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
+                val newReq = req.newBuilder()
+                    .header("Cookie", cookieParts.joinToString("; "))
+                    .build()
+                chain.proceed(newReq)
+            } else {
+                chain.proceed(req)
+            }
+        }
     }
 
     data class Id(val id: String)
