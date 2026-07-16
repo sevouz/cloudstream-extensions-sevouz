@@ -1,4 +1,4 @@
-version = 27
+version = 28
 
 android {
     buildFeatures {
@@ -15,5 +15,5 @@ cloudstream {
         "Movie",
         "TvSeries"
     )
-    iconUrl = "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse/icon.png"
+    iconUrl = "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/CNC%20Verse%20Mobile/logo.jpeg"
 }
