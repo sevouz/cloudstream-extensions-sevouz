@@ -175,19 +175,17 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             return true
         }
 
-        // Add all video sources
-        result.sources.forEach { source ->
-            val url = source.file ?: return@forEach
-            val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
-            val label = source.label ?: "Auto"
-            val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-            callback.invoke(
-                newExtractorLink("$name $label", name, fullUrl, type = type) {
-                    this.referer = MAIN_URL
-                    this.quality = getQualityFromLabel(label)
-                }
-            )
-        }
+        // Add video source (use first valid m3u8 - quality is handled by HLS internally)
+        val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
+        if (source == null) return false
+        val url = source.file!!
+        val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
+        val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        callback.invoke(
+            newExtractorLink(name, name, fullUrl, type = type) {
+                this.referer = MAIN_URL
+            }
+        )
 
         // Add subtitles
         result.tracks?.forEach { track ->
