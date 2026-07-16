@@ -29,7 +29,7 @@ val BROWSER_HEADERS = mapOf(
 data class BypassResult(val cookie: String, val addhash: String, val usertoken: String, val dataTime: String)
 
 @Volatile var cachedBypass: BypassResult? = null
-@Volatile private var cachedBypassTime: Long = 0L
+@Volatile var cachedBypassTime: Long = 0L
 
 suspend fun ensureBypass(): BypassResult {
     val cached = cachedBypass
