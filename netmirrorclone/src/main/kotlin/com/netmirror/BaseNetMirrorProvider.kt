@@ -175,15 +175,15 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             return true
         }
 
-        // Add video source (use first valid m3u8 - quality is handled by HLS internally)
+        // Add video source
         val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
         if (source == null) return false
         val url = source.file!!
         val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
-        val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
         callback.invoke(
-            newExtractorLink(name, name, fullUrl, type = type) {
+            newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
                 this.referer = MAIN_URL
+                this.isM3u8 = true
             }
         )
 
