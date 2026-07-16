@@ -103,7 +103,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     this.episode = it.ep.replace("E", "").toIntOrNull()
                     this.season = it.s.replace("S", "").toIntOrNull()
                     this.posterUrl = "https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg"
-                    this.posterHeaders = mapOf("Referer" to "$mainUrl/home")
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -145,7 +144,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
                     this.posterUrl = "https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg"
-                    this.posterHeaders = mapOf("Referer" to "$mainUrl/home")
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
