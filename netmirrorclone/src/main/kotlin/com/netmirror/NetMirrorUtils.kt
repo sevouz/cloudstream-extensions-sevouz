@@ -115,8 +115,8 @@ suspend fun ensureBypass(): BypassResult {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    // Wait for ad to "complete" (25 seconds in MirrorVerse, we use 5 to be faster)
-    kotlinx.coroutines.delay(5000)
+    // Wait for ad to "complete" (25 seconds like MirrorVerse)
+    kotlinx.coroutines.delay(25000)
 
     val result = BypassResult(cookie, addhash, "", dataTime)
     cachedBypass = result
