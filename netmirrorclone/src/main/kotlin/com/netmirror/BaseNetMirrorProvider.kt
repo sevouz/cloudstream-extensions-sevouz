@@ -183,7 +183,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         callback.invoke(
             newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
                 this.referer = MAIN_URL
-                this.isM3u8 = true
             }
         )
 
