@@ -25,9 +25,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val playlistPath: String
 
     private suspend fun cookies(): Map<String, String> {
-        val bypass = ensureBypass()
+        val bypass = cachedBypass ?: ensureBypass()
         val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
+        if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
         return c
     }
 
@@ -38,6 +39,17 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             headers = BROWSER_HEADERS,
             referer = "$mainUrl/mobile/home?app=1"
         ).document
+
+        // Extract cookie from this response if we don't have one yet
+        if (cachedBypass == null || cachedBypass?.cookie.isNullOrEmpty()) {
+            val html = doc.html()
+            if (!html.contains("We Need Support")) {
+                // No ad wall, page loaded fine - cache empty bypass
+                cachedBypass = BypassResult("", "", "", "")
+                cachedBypassTime = System.currentTimeMillis()
+            }
+        }
+
         val items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
             val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
@@ -99,6 +111,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     this.name = it.t
                     this.episode = it.ep.replace("E", "").toIntOrNull()
                     this.season = it.s.replace("S", "").toIntOrNull()
+                    this.posterUrl = "https://imgcdn.kim/${imgPrefix}epimg/${it.id}.jpg"
+                    this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
             if (data.nextPageShow == 1 && data.nextPageSeason != null) {
@@ -138,6 +152,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
+                    this.posterUrl = "https://imgcdn.kim/${imgPrefix}epimg/${it.id}.jpg"
+                    this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
             if (data.nextPageShow == 0) break
