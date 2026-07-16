@@ -25,10 +25,11 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val playlistPath: String
 
     private suspend fun cookies(): Map<String, String> {
-        val bypass = cachedBypass ?: ensureBypass()
+        val bypass = ensureBypass()
         val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
         if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
+        if (bypass.usertoken.isNotEmpty()) c["usertoken"] = bypass.usertoken
         return c
     }
 
@@ -39,17 +40,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             headers = BROWSER_HEADERS,
             referer = "$mainUrl/mobile/home?app=1"
         ).document
-
-        // Extract cookie from this response if we don't have one yet
-        if (cachedBypass == null || cachedBypass?.cookie.isNullOrEmpty()) {
-            val html = doc.html()
-            if (!html.contains("We Need Support")) {
-                // No ad wall, page loaded fine - cache empty bypass
-                cachedBypass = BypassResult("", "", "", "")
-                cachedBypassTime = System.currentTimeMillis()
-            }
-        }
-
         val items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
             val list = section.select("article, .top10-post").mapNotNull { it.toResult() }

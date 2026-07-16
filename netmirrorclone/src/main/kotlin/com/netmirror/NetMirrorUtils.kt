@@ -91,6 +91,7 @@ suspend fun ensureBypass(): BypassResult {
         val result = BypassResult(cookie, "", "", dataTime)
         cachedBypass = result
         cachedBypassTime = System.currentTimeMillis()
+        BypassStorage.save(result)
         return result
     }
 
@@ -102,6 +103,7 @@ suspend fun ensureBypass(): BypassResult {
         val result = BypassResult(cookie, "", "", dataTime)
         cachedBypass = result
         cachedBypassTime = System.currentTimeMillis()
+        BypassStorage.save(result)
         return result
     }
 
@@ -115,8 +117,8 @@ suspend fun ensureBypass(): BypassResult {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    // Wait for ad to "complete" (try 10 seconds)
-    kotlinx.coroutines.delay(10000)
+    // Wait for ad to "complete" (15 seconds)
+    kotlinx.coroutines.delay(15000)
 
     // Step 4: POST to verify2.php with addhash to confirm ad was watched
     // Retry up to 10 times with 2-second delays
@@ -151,6 +153,7 @@ suspend fun ensureBypass(): BypassResult {
     val result = BypassResult(finalCookie, addhash, usertoken, dataTime)
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
+    BypassStorage.save(result)
     return result
 }
 
