@@ -1,6 +1,7 @@
 package com.netmirror
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -165,21 +166,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         return true
     }
 
+    private val cloudflareKiller by lazy { CloudflareKiller() }
+
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
-        return Interceptor { chain ->
-            val req = chain.request()
-            val url = req.url.toString()
-            if (url.contains(".m3u8") || url.contains("/mobile/hls/") || url.contains(".ts")) {
-                val bypass = cachedBypass
-                val parts = mutableListOf("hd=on", "ott=$ott")
-                if (bypass != null) {
-                    if (bypass.cookie.isNotEmpty()) parts.add("t_hash_t=${bypass.cookie}")
-                    if (bypass.addhash.isNotEmpty()) parts.add("addhash=${bypass.addhash}")
-                    if (bypass.usertoken.isNotEmpty()) parts.add("usertoken=${bypass.usertoken}")
-                }
-                chain.proceed(req.newBuilder().header("Cookie", parts.joinToString("; ")).build())
-            } else chain.proceed(req)
-        }
+        return cloudflareKiller
     }
 
     data class Id(val id: String)

@@ -49,11 +49,11 @@ suspend fun ensureBypass(): BypassResult {
             .build()
 
         val request = Request.Builder()
-            .url("$MAIN_URL/verify.php")
+            .url("https://net52.cc/verify.php")
             .post(formBody)
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-            .header("Referer", "$MAIN_URL/verify2")
-            .header("Origin", MAIN_URL)
+            .header("Referer", "https://net22.cc/verify2")
+            .header("Origin", "https://net22.cc")
             .build()
 
         val response = client.newCall(request).execute()
