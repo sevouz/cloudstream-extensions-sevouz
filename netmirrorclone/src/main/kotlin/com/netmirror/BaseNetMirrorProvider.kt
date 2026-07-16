@@ -159,17 +159,60 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val ld = parseJson<LoadData>(data)
-        val m3u8 = try {
-            getPlaylistLink(ld.id, ott, playlistPath) ?: getNewTvLink(ld.id, ott)
+        val result = try {
+            getPlaylistLink(ld.id, ott, playlistPath)
         } catch (_: Exception) { null }
 
-        if (m3u8.isNullOrBlank()) return false
-        callback.invoke(
-            newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
-                this.referer = MAIN_URL
+        if (result == null) {
+            // Fallback to NewTV API
+            val m3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
+            if (m3u8.isNullOrBlank()) return false
+            callback.invoke(
+                newExtractorLink(name, name, m3u8, type = ExtractorLinkType.M3U8) {
+                    this.referer = MAIN_URL
+                }
+            )
+            return true
+        }
+
+        // Add all video sources
+        result.sources.forEach { source ->
+            val url = source.file ?: return@forEach
+            val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
+            val label = source.label ?: "Auto"
+            val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            callback.invoke(
+                newExtractorLink("$name $label", name, fullUrl, type = type) {
+                    this.referer = MAIN_URL
+                    this.quality = getQualityFromLabel(label)
+                }
+            )
+        }
+
+        // Add subtitles
+        result.tracks?.forEach { track ->
+            val url = track.file ?: return@forEach
+            val label = track.label ?: "Unknown"
+            val kind = track.kind ?: ""
+            if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
+                subtitleCallback.invoke(
+                    SubtitleFile(label, url)
+                )
             }
-        )
+        }
+
         return true
+    }
+
+    private fun getQualityFromLabel(label: String): Int {
+        return when {
+            label.contains("4k", true) || label.contains("2160", true) -> Qualities.UHD4k.value
+            label.contains("1080", true) -> Qualities.P1080.value
+            label.contains("720", true) -> Qualities.P720.value
+            label.contains("480", true) -> Qualities.P480.value
+            label.contains("360", true) -> Qualities.P360.value
+            else -> Qualities.Unknown.value
+        }
     }
 
     private val cloudflareKiller by lazy { CloudflareKiller() }

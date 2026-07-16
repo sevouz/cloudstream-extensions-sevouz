@@ -157,7 +157,7 @@ suspend fun ensureBypass(): BypassResult {
     return result
 }
 
-suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): String? {
+suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): PlaylistResult? {
     val bypass = ensureBypass()
     if (bypass.cookie.isEmpty()) return null
 
@@ -176,33 +176,38 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Stri
         cookies = cookies
     ).text
 
-    // Pattern 1: relative /mobile/hls/ path (what MirrorVerse uses)
-    val hlsMatch = Regex("""(/mobile/hls/[^\s"']+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
-    if (!hlsMatch.isNullOrBlank()) return "$MAIN_URL$hlsMatch"
-
-    // Pattern 2: full https m3u8 URL
-    val fullUrl = Regex("""(https?://[^\s"'<>\}\]\\]+\.m3u8[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
-    if (!fullUrl.isNullOrBlank()) return fullUrl
-
-    // Pattern 3: JSON "file" field
-    val fileMatch = Regex(""""file"\s*:\s*"([^"]+)"""").find(response)?.groupValues?.get(1)
-    if (!fileMatch.isNullOrBlank()) {
-        return if (fileMatch.startsWith("http")) fileMatch
-        else if (fileMatch.startsWith("/")) "$MAIN_URL$fileMatch"
-        else null
-    }
-
-    // Pattern 4: JSON array/object parse
+    // Try JSON array format: [{"sources":[...],"tracks":[...]}]
     try {
         val playlist = tryParseJson<List<PlayListItem>>(response)
-        val file = playlist?.firstOrNull()?.sources?.firstOrNull()?.file
-        if (!file.isNullOrBlank()) {
-            return if (file.startsWith("http")) file else "$MAIN_URL$file"
+        val item = playlist?.firstOrNull()
+        if (item != null && !item.sources.isNullOrEmpty()) {
+            return PlaylistResult(item.sources, item.tracks)
         }
     } catch (_: Exception) {}
 
+    // Try single object
+    try {
+        val item = tryParseJson<PlayListItem>(response)
+        if (item != null && !item.sources.isNullOrEmpty()) {
+            return PlaylistResult(item.sources, item.tracks)
+        }
+    } catch (_: Exception) {}
+
+    // Regex fallback for m3u8
+    val m3u8 = Regex("""(/mobile/hls/[^\s"']+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
+    if (!m3u8.isNullOrBlank()) {
+        return PlaylistResult(listOf(Source("$MAIN_URL$m3u8", "Auto", "m3u8")), null)
+    }
+
+    val fullUrl = Regex("""(https?://[^\s"'<>\}\]\\]+\.m3u8[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
+    if (!fullUrl.isNullOrBlank()) {
+        return PlaylistResult(listOf(Source(fullUrl, "Auto", "m3u8")), null)
+    }
+
     return null
 }
+
+data class PlaylistResult(val sources: List<Source>, val tracks: List<Tracks>?)
 
 private val NEWTV_HEADERS = mapOf(
     "Cache-Control" to "no-cache, no-store, must-revalidate",
@@ -274,8 +279,9 @@ suspend fun getNewTvLink(id: String, ott: String): String? {
 
 data class TokenResponse(val token_hash: String? = null)
 data class PlayerResponse(val status: String? = null, val video_link: String? = null, val referer: String? = null)
-data class PlayListItem(val sources: List<Source>? = null, val tracks: List<Any>? = null, val title: String? = null)
+data class PlayListItem(val sources: List<Source>? = null, val tracks: List<Tracks>? = null, val title: String? = null, val image: String? = null)
 data class Source(val file: String? = null, val label: String? = null, val type: String? = null)
+data class Tracks(val file: String? = null, val kind: String? = null, val label: String? = null)
 
 data class SearchResult(val id: String, val t: String)
 data class SearchData(val head: String? = null, val searchResult: List<SearchResult> = emptyList(), val type: Int = 0)
