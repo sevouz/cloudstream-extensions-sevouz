@@ -1,4 +1,4 @@
-version = 21
+version = 20
 
 android {
     buildFeatures {
@@ -7,7 +7,7 @@ android {
 }
 
 cloudstream {
-    language = "en"
+    language = "ta"
     description = "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages"
     authors = listOf("sevouz")
     status = 1
