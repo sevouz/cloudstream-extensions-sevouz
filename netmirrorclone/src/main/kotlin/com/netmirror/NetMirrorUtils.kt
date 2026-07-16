@@ -37,54 +37,88 @@ suspend fun ensureBypass(): BypassResult {
         return cached
     }
 
+    // Step 1: GET homepage to get cookie and check for ad wall
+    val homeResp = app.get(
+        "$MAIN_URL/mobile/home?app=1",
+        headers = BROWSER_HEADERS,
+        referer = "$MAIN_URL/mobile/home?app=1"
+    )
     var cookie = ""
-    try {
-        val client = OkHttpClient.Builder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-
-        val formBody = FormBody.Builder()
-            .add("g-recaptcha-response", UUID.randomUUID().toString())
-            .build()
-
-        val request = Request.Builder()
-            .url("https://net52.cc/verify.php")
-            .post(formBody)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-            .header("Referer", "https://net22.cc/verify2")
-            .header("Origin", "https://net22.cc")
-            .build()
-
-        val response = client.newCall(request).execute()
-        response.headers("Set-Cookie").forEach { h ->
-            if (h.contains("t_hash_t=")) {
-                cookie = h.substringAfter("t_hash_t=").substringBefore(";")
-            }
+    homeResp.okhttpResponse.headers("Set-Cookie").forEach { h ->
+        if (h.contains("t_hash_t=")) {
+            cookie = h.substringAfter("t_hash_t=").substringBefore(";")
         }
-        response.close()
-    } catch (_: Exception) {}
+    }
+    if (cookie.isEmpty()) {
+        cookie = homeResp.cookies["t_hash_t"] ?: ""
+    }
+
+    // Also try verify.php if homepage didn't give cookie
+    if (cookie.isEmpty()) {
+        try {
+            val client = OkHttpClient.Builder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+            val formBody = FormBody.Builder()
+                .add("g-recaptcha-response", UUID.randomUUID().toString())
+                .build()
+            val request = Request.Builder()
+                .url("https://net52.cc/verify.php")
+                .post(formBody)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+                .header("Referer", "https://net22.cc/verify2")
+                .header("Origin", "https://net22.cc")
+                .build()
+            val response = client.newCall(request).execute()
+            response.headers("Set-Cookie").forEach { h ->
+                if (h.contains("t_hash_t=")) {
+                    cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+                }
+            }
+            response.close()
+        } catch (_: Exception) {}
+    }
 
     if (cookie.isEmpty()) return BypassResult("", "", "", "")
 
-    var addhash = ""
-    var dataTime = ""
-    var usertoken = ""
+    val doc = homeResp.document
+    val html = doc.html()
+
+    // Check if there's NO ad wall
+    if (!html.contains("We Need Support") || !html.contains("open-support")) {
+        val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
+        val result = BypassResult(cookie, "", "", dataTime)
+        cachedBypass = result
+        cachedBypassTime = System.currentTimeMillis()
+        return result
+    }
+
+    // Ad wall exists - extract addhash
+    val addhash = doc.selectFirst("body")?.attr("data-addhash") ?: ""
+    val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
+
+    if (addhash.isBlank()) {
+        val result = BypassResult(cookie, "", "", dataTime)
+        cachedBypass = result
+        cachedBypassTime = System.currentTimeMillis()
+        return result
+    }
+
+    // Extract Qury and Vsite2 from page JavaScript
+    val qury = Regex("""Qury\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "ffr455"
+    val vsite = Regex("""Vsite2\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "userver"
+
+    // Simulate ad click
+    val adClickUrl = "https://$vsite.net52.cc/?$qury=$addhash&a=y&t=${Math.random()}"
     try {
-        val doc = app.get(
-            "$MAIN_URL/mobile/verify2.php",
-            headers = BROWSER_HEADERS,
-            cookies = mapOf("t_hash_t" to cookie, "hd" to "on")
-        ).document
-        addhash = doc.selectFirst("[data-addhash]")?.attr("data-addhash") ?: ""
-        dataTime = doc.selectFirst("[data-time]")?.attr("data-time") ?: ""
-        // usertoken might be in a cookie returned or in page content
-        usertoken = doc.selectFirst("[data-utoken], [data-usertoken], input[name=usertoken], input[name=token]")?.attr("value")
-            ?: doc.selectFirst("[data-utoken], [data-usertoken]")?.attr("data-utoken")
-            ?: ""
+        app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    val result = BypassResult(cookie, addhash, usertoken, dataTime)
+    // Wait for ad to "complete" (25 seconds in MirrorVerse, we use 5 to be faster)
+    kotlinx.coroutines.delay(5000)
+
+    val result = BypassResult(cookie, addhash, "", dataTime)
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
     return result
