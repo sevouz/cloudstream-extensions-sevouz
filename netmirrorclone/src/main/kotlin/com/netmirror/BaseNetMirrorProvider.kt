@@ -19,6 +19,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     abstract val ott: String
     abstract val imgPrefix: String
+    abstract val epImgPrefix: String
     abstract val searchPath: String
     abstract val postPath: String
     abstract val episodesPath: String
@@ -101,7 +102,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     this.name = it.t
                     this.episode = it.ep.replace("E", "").toIntOrNull()
                     this.season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/${imgPrefix}epimg/${it.id}.jpg"
+                    this.posterUrl = "https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg"
+                    this.posterHeaders = mapOf("Referer" to "$mainUrl/home")
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -142,7 +144,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/${imgPrefix}epimg/${it.id}.jpg"
+                    this.posterUrl = "https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg"
+                    this.posterHeaders = mapOf("Referer" to "$mainUrl/home")
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
