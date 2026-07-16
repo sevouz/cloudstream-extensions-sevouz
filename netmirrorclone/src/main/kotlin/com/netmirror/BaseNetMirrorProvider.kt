@@ -169,13 +169,15 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         return Interceptor { chain ->
             val req = chain.request()
             val url = req.url.toString()
-            if (url.contains(".m3u8") || url.contains("/mobile/hls/")) {
+            if (url.contains(".m3u8") || url.contains("/mobile/hls/") || url.contains(".ts")) {
                 val bypass = cachedBypass
-                val cookieStr = if (bypass != null && bypass.cookie.isNotEmpty()) {
-                    "t_hash_t=${bypass.cookie}; hd=on; ott=$ott" +
-                        if (bypass.addhash.isNotEmpty()) "; addhash=${bypass.addhash}" else ""
-                } else "hd=on"
-                chain.proceed(req.newBuilder().header("Cookie", cookieStr).build())
+                val parts = mutableListOf("hd=on", "ott=$ott")
+                if (bypass != null) {
+                    if (bypass.cookie.isNotEmpty()) parts.add("t_hash_t=${bypass.cookie}")
+                    if (bypass.addhash.isNotEmpty()) parts.add("addhash=${bypass.addhash}")
+                    if (bypass.usertoken.isNotEmpty()) parts.add("usertoken=${bypass.usertoken}")
+                }
+                chain.proceed(req.newBuilder().header("Cookie", parts.joinToString("; ")).build())
             } else chain.proceed(req)
         }
     }

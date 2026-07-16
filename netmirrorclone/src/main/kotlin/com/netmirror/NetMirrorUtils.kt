@@ -26,7 +26,7 @@ val BROWSER_HEADERS = mapOf(
     "X-Requested-With" to "XMLHttpRequest"
 )
 
-data class BypassResult(val cookie: String, val addhash: String)
+data class BypassResult(val cookie: String, val addhash: String, val usertoken: String, val dataTime: String)
 
 @Volatile var cachedBypass: BypassResult? = null
 @Volatile private var cachedBypassTime: Long = 0L
@@ -65,9 +65,11 @@ suspend fun ensureBypass(): BypassResult {
         response.close()
     } catch (_: Exception) {}
 
-    if (cookie.isEmpty()) return BypassResult("", "")
+    if (cookie.isEmpty()) return BypassResult("", "", "", "")
 
     var addhash = ""
+    var dataTime = ""
+    var usertoken = ""
     try {
         val doc = app.get(
             "$MAIN_URL/mobile/verify2.php",
@@ -75,9 +77,14 @@ suspend fun ensureBypass(): BypassResult {
             cookies = mapOf("t_hash_t" to cookie, "hd" to "on")
         ).document
         addhash = doc.selectFirst("[data-addhash]")?.attr("data-addhash") ?: ""
+        dataTime = doc.selectFirst("[data-time]")?.attr("data-time") ?: ""
+        // usertoken might be in a cookie returned or in page content
+        usertoken = doc.selectFirst("[data-utoken], [data-usertoken], input[name=usertoken], input[name=token]")?.attr("value")
+            ?: doc.selectFirst("[data-utoken], [data-usertoken]")?.attr("data-utoken")
+            ?: ""
     } catch (_: Exception) {}
 
-    val result = BypassResult(cookie, addhash)
+    val result = BypassResult(cookie, addhash, usertoken, dataTime)
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
     return result
@@ -92,9 +99,8 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Stri
         "hd" to "on",
         "ott" to ott
     )
-    if (bypass.addhash.isNotEmpty()) {
-        cookies["addhash"] = bypass.addhash
-    }
+    if (bypass.addhash.isNotEmpty()) cookies["addhash"] = bypass.addhash
+    if (bypass.usertoken.isNotEmpty()) cookies["usertoken"] = bypass.usertoken
 
     val response = app.get(
         "$MAIN_URL/mobile/$playlistPath?id=$id",
