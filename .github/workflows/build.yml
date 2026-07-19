@@ -92,6 +92,19 @@ jobs:
         run: |
           cp $GITHUB_WORKSPACE/builds/*.cs3 $GITHUB_WORKSPACE/public-builds/
           cp $GITHUB_WORKSPACE/builds/plugins.json $GITHUB_WORKSPACE/public-builds/plugins.json
+          # Rewrite .cs3 URLs in plugins.json to point to the PUBLIC repo
+          python3 -c "
+          import json
+          with open('$GITHUB_WORKSPACE/public-builds/plugins.json') as f:
+              plugins = json.load(f)
+          for p in plugins:
+              if 'url' in p:
+                  p['url'] = p['url'].replace('$GITHUB_REPOSITORY', '${{ vars.PUBLIC_REPO }}')
+              if 'repositoryUrl' in p:
+                  p['repositoryUrl'] = 'https://github.com/${{ vars.PUBLIC_REPO }}'
+          with open('$GITHUB_WORKSPACE/public-builds/plugins.json', 'w') as f:
+              json.dump(plugins, f, indent=4)
+          "
           # Generate repo manifest pointing to the PUBLIC repo
           PUBLIC_REPO_NAME=$(echo "${{ vars.PUBLIC_REPO }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           cat > $GITHUB_WORKSPACE/public-builds/$PUBLIC_REPO_NAME.json << EOF
