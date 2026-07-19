@@ -296,7 +296,11 @@ class AniKotoV2Provider : MainAPI() {
         } else {
             // Use loadExtractor for unknown domains
             var found = false
+            val collected = mutableListOf<ExtractorLink>()
             loadExtractor(normalizedUrl, referer, subtitleCallback) { link ->
+                collected.add(link)
+            }
+            for (link in collected) {
                 val displayName = if (audioType.isNotBlank()) "${link.source} (${audioType.replaceFirstChar { it.uppercase() }})" else link.source
                 callback.invoke(
                     newExtractorLink(displayName, displayName, link.url, link.type) {
