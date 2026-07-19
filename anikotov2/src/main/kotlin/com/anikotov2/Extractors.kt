@@ -17,6 +17,117 @@ open class MegaPlayExtractor : ExtractorApi() {
 
     companion object {
         private const val TAG = "MegaPlayV2"
+
+        suspend fun extractMegaPlayUrl(
+            url: String,
+            referer: String?,
+            host: String,
+            serverName: String,
+            subtitleCallback: (SubtitleFile) -> Unit,
+            callback: (ExtractorLink) -> Unit
+        ) {
+            val playbackHeaders = mapOf(
+                "Referer" to "$host/",
+                "Origin" to host,
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+            )
+            val pageHeaders = mapOf(
+                "Referer" to (referer ?: "https://anikototv.to/"),
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+            )
+
+            try {
+                val doc = app.get(url, headers = pageHeaders).document
+                val playerEl = doc.selectFirst("#megaplay-player")
+                val streamId = playerEl?.attr("data-id")
+
+                if (streamId.isNullOrBlank()) {
+                    Log.e(TAG, "No data-id at $url for $serverName, trying WebView")
+                    fallbackWebView(url, host, serverName, playbackHeaders, callback)
+                    return
+                }
+
+                val type = playerEl.attr("data-type").ifBlank { "m3u8" }
+                Log.d(TAG, "[$serverName] streamId=$streamId type=$type")
+
+                val ajaxHeaders = mapOf(
+                    "Accept" to "*/*",
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Referer" to host
+                )
+
+                val jsonText = app.get("$host/stream/getSources?id=$streamId&id=$streamId", headers = ajaxHeaders).text
+                Log.d(TAG, "[$serverName] getSources: $jsonText")
+
+                val root = parseJson<MegaPlayResponse>(jsonText)
+                val m3u8 = root.sources?.file
+
+                if (m3u8.isNullOrBlank()) {
+                    Log.e(TAG, "[$serverName] no m3u8, trying WebView")
+                    fallbackWebView(url, host, serverName, playbackHeaders, callback)
+                    return
+                }
+
+                callback.invoke(
+                    newExtractorLink(serverName, serverName, m3u8, ExtractorLinkType.M3U8) {
+                        this.referer = "$host/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = playbackHeaders
+                    }
+                )
+
+                // Subtitles
+                root.tracks?.forEach { track ->
+                    val file = track.file ?: return@forEach
+                    val kind = track.kind ?: return@forEach
+                    if (kind == "captions" || kind == "subtitles") {
+                        val label = track.label ?: "Unknown"
+                        subtitleCallback(newSubtitleFile(label, file))
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[$serverName] extractMegaPlayUrl failed: ${e.message}")
+                fallbackWebView(url, host, serverName, playbackHeaders, callback)
+            }
+        }
+
+        private suspend fun fallbackWebView(
+            url: String,
+            host: String,
+            serverName: String,
+            playbackHeaders: Map<String, String>,
+            callback: (ExtractorLink) -> Unit
+        ) {
+            try {
+                val jsToClickPlay = """
+                    (() => {
+                        const btn = document.querySelector('.jw-icon-display.jw-button-color.jw-reset');
+                        if (btn) { btn.click(); return "clicked"; }
+                        return "not found";
+                    })();
+                """.trimIndent()
+
+                val m3u8Resolver = WebViewResolver(
+                    interceptUrl = Regex("""master\.m3u8|index\.m3u8|playlist\.m3u8|\.m3u8"""),
+                    additionalUrls = listOf(Regex("""\.m3u8""")),
+                    script = jsToClickPlay,
+                    useOkhttp = false,
+                    timeout = 15_000L
+                )
+
+                val fallbackM3u8 = app.get(url = url, referer = host, interceptor = m3u8Resolver).url
+
+                callback.invoke(
+                    newExtractorLink(serverName, serverName, fallbackM3u8, ExtractorLinkType.M3U8) {
+                        this.referer = "$host/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = playbackHeaders
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "[$serverName] WebView fallback failed: ${e.message}")
+            }
+        }
     }
 
     override suspend fun getUrl(
@@ -25,113 +136,7 @@ open class MegaPlayExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        try {
-            val embedHeaders = mapOf(
-                "Referer" to (referer ?: "https://anikototv.to/"),
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
-            )
-
-            val document = app.get(url, headers = embedHeaders).document
-            val streamId = document.selectFirst("#megaplay-player")?.attr("data-id")
-
-            if (streamId.isNullOrBlank()) {
-                Log.e(TAG, "No megaplay-player data-id at: $url, trying WebView fallback")
-                fallbackWebView(url, subtitleCallback, callback)
-                return
-            }
-
-            Log.d(TAG, "Found data-id: $streamId for $name")
-
-            val ajaxHeaders = mapOf(
-                "Accept" to "*/*",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to mainUrl
-            )
-
-            val sourcesText = app.get(
-                "$mainUrl/stream/getSources?id=$streamId&id=$streamId",
-                headers = ajaxHeaders
-            ).text
-
-            Log.d(TAG, "getSources ($name): $sourcesText")
-
-            val response = parseJson<MegaPlayResponse>(sourcesText)
-            val m3u8 = response.sources?.file
-
-            if (m3u8.isNullOrBlank()) {
-                Log.e(TAG, "No m3u8 in response for $name, trying WebView fallback")
-                fallbackWebView(url, subtitleCallback, callback)
-                return
-            }
-
-            val streamHeaders = mapOf(
-                "Referer" to "$mainUrl/",
-                "Origin" to mainUrl,
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
-            )
-
-            callback.invoke(
-                newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.Unknown.value
-                    this.headers = streamHeaders
-                }
-            )
-
-            // Subtitles
-            response.tracks?.forEach { track ->
-                val file = track.file ?: return@forEach
-                val kind = track.kind ?: return@forEach
-                if (kind == "captions" || kind == "subtitles") {
-                    subtitleCallback(newSubtitleFile(track.label ?: "Unknown", file))
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "$name primary failed: ${e.message}, trying WebView")
-            fallbackWebView(url, subtitleCallback, callback)
-        }
-    }
-
-    private suspend fun fallbackWebView(
-        url: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        Log.d(TAG, "WebView fallback for $name: $url")
-
-        val jsToClickPlay = """
-            (() => {
-                const btn = document.querySelector('.jw-icon-display.jw-button-color.jw-reset');
-                if (btn) { btn.click(); return "clicked"; }
-                return "button not found";
-            })();
-        """.trimIndent()
-
-        val m3u8Resolver = WebViewResolver(
-            interceptUrl = Regex("""master\.m3u8|index\.m3u8|playlist\.m3u8|\.m3u8"""),
-            additionalUrls = listOf(Regex("""\.m3u8""")),
-            script = jsToClickPlay,
-            scriptCallback = { result -> Log.d(TAG, "JS Result: $result") },
-            useOkhttp = false,
-            timeout = 15_000L
-        )
-
-        try {
-            val fallbackM3u8 = app.get(url = url, referer = mainUrl, interceptor = m3u8Resolver).url
-
-            callback.invoke(
-                newExtractorLink(name, name, fallbackM3u8, ExtractorLinkType.M3U8) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.Unknown.value
-                    this.headers = mapOf(
-                        "Referer" to "$mainUrl/",
-                        "Origin" to mainUrl
-                    )
-                }
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "$name WebView fallback also failed: ${e.message}")
-        }
+        extractMegaPlayUrl(url, referer, mainUrl, name, subtitleCallback, callback)
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
