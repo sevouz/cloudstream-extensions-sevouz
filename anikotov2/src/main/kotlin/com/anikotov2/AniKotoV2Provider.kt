@@ -205,22 +205,23 @@ class AniKotoV2Provider : MainAPI() {
         val parts = data.split("|")
         if (parts.size < 3) return false
 
+        val animeId = parts[0]
         val dataIds = parts[1]
         val isDub = parts.size > 3 && parts[3] == "dub"
 
-        // Step 1: Get server list
+        // Step 1: Get server list (include anime param for proper session)
         val serverResponse = app.get(
-            "$mainUrl/ajax/server/list?servers=$dataIds",
+            "$mainUrl/ajax/server/list?anime=$animeId&servers=$dataIds",
             headers = ajaxHeaders(mainUrl)
         ).text
         val serverResult = parseJson<AjaxResponse>(serverResponse)
         val serverDoc = Jsoup.parse(serverResult.result ?: return false)
 
-        // Step 2: Collect servers by type
+        // Step 2: Collect servers by type (support both site layouts)
         val typeLabels = mutableListOf<Pair<String, List<Element>>>()
 
-        val subServers = serverDoc.select("div.type[data-type=sub] li[data-link-id]")
-        val dubServers = serverDoc.select("div.type[data-type=dub] li[data-link-id]")
+        val subServers = serverDoc.select("div.server-type[data-type=sub] div.server[data-link-id], div.type[data-type=sub] li[data-link-id]")
+        val dubServers = serverDoc.select("div.server-type[data-type=dub] div.server[data-link-id], div.type[data-type=dub] li[data-link-id]")
 
         if (isDub) {
             if (dubServers.isNotEmpty()) typeLabels.add("Dub" to dubServers.toList())
@@ -231,7 +232,7 @@ class AniKotoV2Provider : MainAPI() {
         }
 
         if (typeLabels.isEmpty()) {
-            val allServers = serverDoc.select("li[data-link-id]")
+            val allServers = serverDoc.select("div.server[data-link-id], li[data-link-id]")
             if (allServers.isNotEmpty()) typeLabels.add("" to allServers.toList())
         }
 
@@ -253,24 +254,33 @@ class AniKotoV2Provider : MainAPI() {
                     val sourceName = if (audioType.isNotBlank()) "$serverName ($audioType)" else serverName
                     Log.d(TAG, "Server: $sourceName, Embed: $embedUrl")
 
-                    // Try inline MegaPlay extraction first (faster, no WebView)
-                    val resolved = resolveMegaPlayInline(embedUrl, audioType, subtitleCallback, callback)
-                    if (!resolved) {
-                        // Fallback to loadExtractor
-                        val collectedLinks = mutableListOf<ExtractorLink>()
-                        loadExtractor(embedUrl, mainUrl, subtitleCallback) { link ->
-                            collectedLinks.add(link)
+                    // Route to correct extractor based on domain
+                    val collectedLinks = mutableListOf<ExtractorLink>()
+                    when {
+                        embedUrl.contains("megaplay.buzz") -> {
+                            MegaPlayExtractor().getUrl(embedUrl, "$mainUrl/", subtitleCallback) { collectedLinks.add(it) }
                         }
-                        for (link in collectedLinks) {
-                            val displayName = if (audioType.isNotBlank()) "${link.source} ($audioType)" else link.source
-                            callback.invoke(
-                                newExtractorLink(displayName, sourceName, link.url, link.type) {
-                                    this.referer = link.referer
-                                    this.quality = link.quality
-                                    this.headers = link.headers
-                                }
-                            )
+                        embedUrl.contains("vidwish.live") -> {
+                            VidwishExtractor().getUrl(embedUrl, "$mainUrl/", subtitleCallback) { collectedLinks.add(it) }
                         }
+                        embedUrl.contains("vidtube.site") -> {
+                            VidtubeExtractor().getUrl(embedUrl, "$mainUrl/", subtitleCallback) { collectedLinks.add(it) }
+                        }
+                        else -> {
+                            loadExtractor(embedUrl, mainUrl, subtitleCallback) { collectedLinks.add(it) }
+                        }
+                    }
+
+                    // Re-emit with audio type labels
+                    for (link in collectedLinks) {
+                        val displayName = if (audioType.isNotBlank()) "${link.source} ($audioType)" else link.source
+                        callback.invoke(
+                            newExtractorLink(displayName, sourceName, link.url, link.type) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
+                        )
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error with server $serverName: ${e.message}")
@@ -279,92 +289,6 @@ class AniKotoV2Provider : MainAPI() {
         }
 
         return true
-    }
-
-    private suspend fun resolveMegaPlayInline(
-        embedUrl: String,
-        audioType: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Normalize URL
-        val normalizedUrl = embedUrl.replace("http://", "https://")
-        val domain = Regex("https?://([^/]+)").find(normalizedUrl)?.groupValues?.get(1) ?: return false
-
-        // Check if it's a MegaPlay-compatible domain
-        val megaPlayDomains = listOf("megaplay.buzz", "vidwish.live", "vidtube.site")
-        if (megaPlayDomains.none { domain.contains(it) }) return false
-
-        val host = "https://$domain"
-        val serverName = when {
-            domain.contains("vidwish") -> "Vidwish"
-            domain.contains("vidtube") -> "Vidtube"
-            else -> "MegaPlay"
-        }
-        val displayType = if (audioType.isNotBlank()) "$serverName ($audioType)" else serverName
-
-        try {
-            val pageHeaders = mapOf(
-                "Referer" to "$mainUrl/",
-                "User-Agent" to BROWSER_HEADERS["User-Agent"]!!
-            )
-            val doc = app.get(normalizedUrl, headers = pageHeaders).document
-
-            val streamId = doc.selectFirst("#megaplay-player")?.attr("data-id")
-            if (streamId.isNullOrBlank()) {
-                Log.e(TAG, "No megaplay-player data-id found at: $normalizedUrl")
-                return false
-            }
-
-            val ajaxH = mapOf(
-                "Accept" to "*/*",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to host
-            )
-
-            val sourcesText = app.get(
-                "$host/stream/getSources?id=$streamId&id=$streamId",
-                headers = ajaxH
-            ).text
-
-            Log.d(TAG, "getSources response: $sourcesText")
-
-            val root = parseJson<MegaPlayResponse>(sourcesText)
-            val m3u8 = root.sources?.file
-
-            if (m3u8.isNullOrBlank()) {
-                Log.e(TAG, "No m3u8 found in getSources response")
-                return false
-            }
-
-            val playbackHeaders = mapOf(
-                "Referer" to "$host/",
-                "Origin" to host,
-                "User-Agent" to BROWSER_HEADERS["User-Agent"]!!
-            )
-
-            callback.invoke(
-                newExtractorLink(displayType, displayType, m3u8, ExtractorLinkType.M3U8) {
-                    this.referer = "$host/"
-                    this.quality = Qualities.Unknown.value
-                    this.headers = playbackHeaders
-                }
-            )
-
-            // Handle subtitles
-            root.tracks?.forEach { track ->
-                val file = track.file ?: return@forEach
-                val kind = track.kind ?: return@forEach
-                if (kind == "captions" || kind == "subtitles") {
-                    subtitleCallback(newSubtitleFile(track.label ?: "Unknown", file))
-                }
-            }
-
-            return true
-        } catch (e: Exception) {
-            Log.e(TAG, "resolveMegaPlayInline failed: ${e.message}")
-            return false
-        }
     }
 
     // Data classes
@@ -384,23 +308,5 @@ class AniKotoV2Provider : MainAPI() {
     data class ServerResult(
         @JsonProperty("url") val url: String? = null,
         @JsonProperty("skip_data") val skipData: Any? = null,
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class MegaPlayResponse(
-        @JsonProperty("sources") val sources: Sources? = null,
-        @JsonProperty("tracks") val tracks: List<Track>? = null,
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class Sources(
-        @JsonProperty("file") val file: String? = null,
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class Track(
-        @JsonProperty("file") val file: String? = null,
-        @JsonProperty("label") val label: String? = null,
-        @JsonProperty("kind") val kind: String? = null,
     )
 }
