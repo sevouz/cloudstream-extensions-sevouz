@@ -21,15 +21,25 @@ jobs:
         with:
           path: "src"
 
-      - name: Checkout or create builds branch
+      - name: Checkout or create builds branch (local repo)
         run: |
           git clone --depth 1 --branch builds https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY.git $GITHUB_WORKSPACE/builds || \
           (mkdir -p $GITHUB_WORKSPACE/builds && cd $GITHUB_WORKSPACE/builds && git init && git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY.git && git checkout --orphan builds)
+
+      - name: Checkout or create builds branch (public repo)
+        if: ${{ vars.PUBLIC_REPO != '' }}
+        run: |
+          git clone --depth 1 --branch builds https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/${{ vars.PUBLIC_REPO }}.git $GITHUB_WORKSPACE/public-builds || \
+          (mkdir -p $GITHUB_WORKSPACE/public-builds && cd $GITHUB_WORKSPACE/public-builds && git init && git remote add origin https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/${{ vars.PUBLIC_REPO }}.git && git checkout --orphan builds)
 
       - name: Clean old builds
         run: |
           cd $GITHUB_WORKSPACE/builds
           rm -f *.cs3
+          if [ -d "$GITHUB_WORKSPACE/public-builds" ]; then
+            cd $GITHUB_WORKSPACE/public-builds
+            rm -f *.cs3
+          fi
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4.6.0
@@ -55,14 +65,6 @@ jobs:
           chmod +x gradlew
           ./gradlew make makePluginsJson
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
-          # Merge: preserve rve entry in plugins.json
-          if [ -f "$GITHUB_WORKSPACE/builds/plugins.json" ]; then
-            python3 -c "
-          import json
-          with open('/tmp/rve_entry.json', 'w') as f:
-              json.dump([], f)
-          "
-          fi
           cp build/plugins.json $GITHUB_WORKSPACE/builds/plugins.json
           python3 -c "
           import json
@@ -71,6 +73,7 @@ jobs:
           with open('$GITHUB_WORKSPACE/builds/plugins.json', 'w') as f:
               json.dump(plugins, f, indent=4)
           "
+          # Generate repo manifest for the private builds branch
           REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           cat > $GITHUB_WORKSPACE/builds/$REPO_NAME.json << EOF
           {
@@ -84,7 +87,26 @@ jobs:
           }
           EOF
 
-      - name: Push builds
+      - name: Copy builds to public repo
+        if: ${{ vars.PUBLIC_REPO != '' }}
+        run: |
+          cp $GITHUB_WORKSPACE/builds/*.cs3 $GITHUB_WORKSPACE/public-builds/
+          cp $GITHUB_WORKSPACE/builds/plugins.json $GITHUB_WORKSPACE/public-builds/plugins.json
+          # Generate repo manifest pointing to the PUBLIC repo
+          PUBLIC_REPO_NAME=$(echo "${{ vars.PUBLIC_REPO }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
+          cat > $GITHUB_WORKSPACE/public-builds/$PUBLIC_REPO_NAME.json << EOF
+          {
+            "name": "Sevouz Plugins",
+            "iconUrl": "https://raw.githubusercontent.com/${{ vars.PUBLIC_REPO }}/builds/icon.png",
+            "description": "OTT Clone Plugins for Cloudstream",
+            "manifestVersion": 1,
+            "pluginLists": [
+              "https://raw.githubusercontent.com/${{ vars.PUBLIC_REPO }}/builds/plugins.json"
+            ]
+          }
+          EOF
+
+      - name: Push builds (private repo)
         run: |
           cd $GITHUB_WORKSPACE/builds
           git config --local user.email "actions@github.com"
@@ -92,3 +114,13 @@ jobs:
           git add .
           git commit --amend -m "Build $GITHUB_SHA" || git commit -m "Build $GITHUB_SHA" || exit 0
           git push --force https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY.git builds
+
+      - name: Push builds (public repo)
+        if: ${{ vars.PUBLIC_REPO != '' }}
+        run: |
+          cd $GITHUB_WORKSPACE/public-builds
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add .
+          git commit --amend -m "Build $GITHUB_SHA" || git commit -m "Build $GITHUB_SHA" || exit 0
+          git push --force https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/${{ vars.PUBLIC_REPO }}.git builds

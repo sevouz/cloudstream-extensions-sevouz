@@ -34,18 +34,47 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         return c
     }
 
+    /** Quick cookies using cached bypass if available, without blocking */
+    private fun quickCookies(): Map<String, String> {
+        val bypass = cachedBypass
+        val c = mutableMapOf("ott" to ott, "hd" to "on")
+        if (bypass != null && bypass.cookie.isNotEmpty()) {
+            c["t_hash_t"] = bypass.cookie
+            if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
+            if (bypass.usertoken.isNotEmpty()) c["usertoken"] = bypass.usertoken
+        }
+        return c
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val doc = app.get(
+        // Try with quick (non-blocking) cookies first
+        var doc = app.get(
             "$mainUrl/mobile/home?app=1",
-            cookies = cookies(),
+            cookies = quickCookies(),
             headers = BROWSER_HEADERS,
             referer = "$mainUrl/mobile/home?app=1"
         ).document
-        val items = doc.select(".tray-container, #top10").mapNotNull { section ->
+        var items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
             val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
             if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
         }
+
+        // If quick cookies didn't work (empty results), fallback to full bypass
+        if (items.isEmpty()) {
+            doc = app.get(
+                "$mainUrl/mobile/home?app=1",
+                cookies = cookies(),
+                headers = BROWSER_HEADERS,
+                referer = "$mainUrl/mobile/home?app=1"
+            ).document
+            items = doc.select(".tray-container, #top10").mapNotNull { section ->
+                val name = section.select("h2, span").text()
+                val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
+                if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
+            }
+        }
+
         return newHomePageResponse(items, false)
     }
 

@@ -3,6 +3,8 @@ package com.netmirror
 import android.util.Base64
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -31,11 +33,26 @@ data class BypassResult(val cookie: String, val addhash: String, val usertoken: 
 @Volatile var cachedBypass: BypassResult? = null
 @Volatile var cachedBypassTime: Long = 0L
 
+private val bypassMutex = Mutex()
+
 suspend fun ensureBypass(): BypassResult {
     val cached = cachedBypass
     if (cached != null && cached.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
         return cached
     }
+
+    // Use mutex to prevent multiple concurrent bypass attempts
+    return bypassMutex.withLock {
+        // Double-check after acquiring lock (another coroutine may have completed it)
+        val rechecked = cachedBypass
+        if (rechecked != null && rechecked.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
+            return@withLock rechecked
+        }
+        doBypass()
+    }
+}
+
+private suspend fun doBypass(): BypassResult {
 
     // Step 1: GET homepage to get cookie and check for ad wall
     val homeResp = app.get(
@@ -117,15 +134,15 @@ suspend fun ensureBypass(): BypassResult {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    // Wait for ad to "complete" (15 seconds)
-    kotlinx.coroutines.delay(15000)
+    // Wait for ad to "complete" — reduced from 15s to 6s
+    kotlinx.coroutines.delay(6000)
 
     // Step 4: POST to verify2.php with addhash to confirm ad was watched
-    // Retry up to 10 times with 2-second delays
+    // Retry up to 6 times with 1.5-second delays (was 10x2s = max 20s, now 6x1.5s = max 9s)
     var usertoken = ""
     var finalCookie = cookie
-    for (attempt in 1..10) {
-        kotlinx.coroutines.delay(2000)
+    for (attempt in 1..6) {
+        kotlinx.coroutines.delay(1500)
         try {
             val verifyResp = app.post(
                 "$MAIN_URL/mobile/verify2.php",
