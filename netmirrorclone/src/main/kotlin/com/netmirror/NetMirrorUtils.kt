@@ -134,8 +134,8 @@ private suspend fun doBypass(): BypassResult {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    // Wait for ad to "complete" — reduced from 15s to 6s
-    kotlinx.coroutines.delay(6000)
+    // Wait for ad to "complete" — 10 seconds (minimum needed for server to accept)
+    kotlinx.coroutines.delay(10000)
 
     // Step 4: POST to verify2.php with addhash to confirm ad was watched
     // Retry up to 6 times with 1.5-second delays (was 10x2s = max 20s, now 6x1.5s = max 9s)
