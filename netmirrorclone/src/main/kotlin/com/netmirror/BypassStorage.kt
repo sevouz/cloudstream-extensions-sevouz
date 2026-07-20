@@ -14,7 +14,7 @@ object BypassStorage {
         val usertoken = prefs?.getString("usertoken", "") ?: ""
         val dataTime = prefs?.getString("dataTime", "") ?: ""
         val timestamp = prefs?.getLong("timestamp", 0L) ?: 0L
-        if (cookie.isNotEmpty() && System.currentTimeMillis() - timestamp < 54_000_000) {
+        if (cookie.isNotEmpty() && System.currentTimeMillis() - timestamp < 86_400_000) {
             cachedBypass = BypassResult(cookie, addhash, usertoken, dataTime)
             cachedBypassTime = timestamp
         }

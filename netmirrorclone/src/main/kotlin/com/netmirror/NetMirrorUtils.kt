@@ -37,7 +37,7 @@ private val bypassMutex = Mutex()
 
 suspend fun ensureBypass(): BypassResult {
     val cached = cachedBypass
-    if (cached != null && cached.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
+    if (cached != null && cached.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 86_400_000) {
         return cached
     }
 
@@ -45,7 +45,7 @@ suspend fun ensureBypass(): BypassResult {
     return bypassMutex.withLock {
         // Double-check after acquiring lock (another coroutine may have completed it)
         val rechecked = cachedBypass
-        if (rechecked != null && rechecked.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
+        if (rechecked != null && rechecked.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 86_400_000) {
             return@withLock rechecked
         }
         doBypass()
