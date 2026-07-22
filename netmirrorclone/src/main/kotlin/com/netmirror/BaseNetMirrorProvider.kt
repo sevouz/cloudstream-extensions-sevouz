@@ -15,7 +15,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "ta"
     override var mainUrl = MAIN_URL
-        get() = MAIN_URL // Always use the dynamically resolved URL
     override val hasMainPage = true
 
     abstract val ott: String
@@ -28,6 +27,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
+        mainUrl = MAIN_URL // Sync with resolved domain
         val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
         if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash

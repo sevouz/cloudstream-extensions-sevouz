@@ -33,8 +33,7 @@ suspend fun resolveMainUrl(): String {
             try {
                 val resp = app.get(
                     "$domain/mobile/home?app=1",
-                    headers = BROWSER_HEADERS,
-                    timeout = 8L
+                    headers = BROWSER_HEADERS
                 )
                 if (resp.code in 200..399) {
                     MAIN_URL = domain
@@ -354,7 +353,7 @@ suspend fun resolveNewTvApi(): String {
     for (encoded in NEWTV_DOMAINS) {
         val base = b64(encoded).trimEnd('/')
         try {
-            val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS, timeout = 6L).text
+            val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS).text
             val hash = tryParseJson<TokenResponse>(text)?.token_hash
             if (!hash.isNullOrBlank()) {
                 resolvedApiUrl = b64(hash).trimEnd('/')
@@ -379,7 +378,7 @@ suspend fun getNewTvLink(id: String, ott: String): String? {
             put("Usertoken", "")
         }
         try {
-            val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers, timeout = 10L).text
+            val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
             val response = tryParseJson<PlayerResponse>(text)
             if (!response?.video_link.isNullOrBlank()) {
                 return response!!.video_link
