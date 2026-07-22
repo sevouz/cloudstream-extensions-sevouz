@@ -10,7 +10,45 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.UUID
 
-const val MAIN_URL = "https://net52.cc"
+// Ordered list of known NetMirror domains — tried in order until one works
+private val NETMIRROR_DOMAINS = listOf(
+    "https://net52.cc",
+    "https://net27.cc",
+    "https://net22.cc"
+)
+
+@Volatile var MAIN_URL = "https://net52.cc"
+    private set
+
+@Volatile private var domainResolved = false
+private val domainMutex = Mutex()
+
+suspend fun resolveMainUrl(): String {
+    if (domainResolved) return MAIN_URL
+
+    return domainMutex.withLock {
+        if (domainResolved) return@withLock MAIN_URL
+
+        for (domain in NETMIRROR_DOMAINS) {
+            try {
+                val resp = app.get(
+                    "$domain/mobile/home?app=1",
+                    headers = BROWSER_HEADERS,
+                    timeout = 8L
+                )
+                if (resp.code in 200..399) {
+                    MAIN_URL = domain
+                    domainResolved = true
+                    return@withLock domain
+                }
+            } catch (_: Exception) {}
+        }
+        // Fallback to first domain if none respond
+        MAIN_URL = NETMIRROR_DOMAINS.first()
+        domainResolved = true
+        MAIN_URL
+    }
+}
 
 val BROWSER_HEADERS = mapOf(
     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -36,6 +74,9 @@ data class BypassResult(val cookie: String, val addhash: String, val usertoken: 
 private val bypassMutex = Mutex()
 
 suspend fun ensureBypass(): BypassResult {
+    // Resolve working domain first
+    resolveMainUrl()
+
     val cached = cachedBypass
     if (cached != null && cached.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 86_400_000) {
         return cached
@@ -50,6 +91,14 @@ suspend fun ensureBypass(): BypassResult {
         }
         doBypass()
     }
+}
+
+/** Invalidate cached bypass and resolved domain — call when requests start failing */
+fun invalidateCache() {
+    cachedBypass = null
+    cachedBypassTime = 0L
+    domainResolved = false
+    resolvedApiUrl = ""
 }
 
 private suspend fun doBypass(): BypassResult {
@@ -81,11 +130,11 @@ private suspend fun doBypass(): BypassResult {
                 .add("g-recaptcha-response", UUID.randomUUID().toString())
                 .build()
             val request = Request.Builder()
-                .url("https://net52.cc/verify.php")
+                .url("$MAIN_URL/verify.php")
                 .post(formBody)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-                .header("Referer", "https://net22.cc/verify2")
-                .header("Origin", "https://net22.cc")
+                .header("Referer", "$MAIN_URL/verify2")
+                .header("Origin", MAIN_URL)
                 .build()
             val response = client.newCall(request).execute()
             response.headers("Set-Cookie").forEach { h ->
@@ -129,7 +178,8 @@ private suspend fun doBypass(): BypassResult {
     val vsite = Regex("""Vsite2\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "userver"
 
     // Simulate ad click
-    val adClickUrl = "https://$vsite.net52.cc/?$qury=$addhash&a=y&t=${Math.random()}"
+    val mainDomain = MAIN_URL.substringAfter("://") // e.g. "net52.cc"
+    val adClickUrl = "https://$vsite.$mainDomain/?$qury=$addhash&a=y&t=${Math.random()}"
     try {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
@@ -186,39 +236,72 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Play
     if (bypass.addhash.isNotEmpty()) cookies["addhash"] = bypass.addhash
     if (bypass.usertoken.isNotEmpty()) cookies["usertoken"] = bypass.usertoken
 
-    val response = app.get(
-        "$MAIN_URL/mobile/$playlistPath?id=$id",
-        headers = BROWSER_HEADERS,
-        referer = "$MAIN_URL/home",
-        cookies = cookies
-    ).text
-
-    // Try JSON array format: [{"sources":[...],"tracks":[...]}]
-    try {
-        val playlist = tryParseJson<List<PlayListItem>>(response)
-        val item = playlist?.firstOrNull()
-        if (item != null && !item.sources.isNullOrEmpty()) {
-            return PlaylistResult(item.sources, item.tracks)
+    // Try current domain first, then retry with fresh bypass if it fails
+    for (attempt in 1..2) {
+        val baseUrl = MAIN_URL
+        val response = try {
+            app.get(
+                "$baseUrl/mobile/$playlistPath?id=$id",
+                headers = BROWSER_HEADERS,
+                referer = "$baseUrl/home",
+                cookies = cookies
+            ).text
+        } catch (e: Exception) {
+            if (attempt == 1) {
+                // First failure — invalidate and retry
+                invalidateCache()
+                resolveMainUrl()
+                val newBypass = ensureBypass()
+                if (newBypass.cookie.isEmpty()) return null
+                cookies["t_hash_t"] = newBypass.cookie
+                if (newBypass.addhash.isNotEmpty()) cookies["addhash"] = newBypass.addhash
+                if (newBypass.usertoken.isNotEmpty()) cookies["usertoken"] = newBypass.usertoken
+                continue
+            }
+            return null
         }
-    } catch (_: Exception) {}
 
-    // Try single object
-    try {
-        val item = tryParseJson<PlayListItem>(response)
-        if (item != null && !item.sources.isNullOrEmpty()) {
-            return PlaylistResult(item.sources, item.tracks)
+        // Try JSON array format: [{"sources":[...],"tracks":[...]}]
+        try {
+            val playlist = tryParseJson<List<PlayListItem>>(response)
+            val item = playlist?.firstOrNull()
+            if (item != null && !item.sources.isNullOrEmpty()) {
+                return PlaylistResult(item.sources, item.tracks)
+            }
+        } catch (_: Exception) {}
+
+        // Try single object
+        try {
+            val item = tryParseJson<PlayListItem>(response)
+            if (item != null && !item.sources.isNullOrEmpty()) {
+                return PlaylistResult(item.sources, item.tracks)
+            }
+        } catch (_: Exception) {}
+
+        // Regex fallback for m3u8
+        val m3u8 = Regex("""(/mobile/hls/[^\s"']+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
+        if (!m3u8.isNullOrBlank()) {
+            return PlaylistResult(listOf(Source("$baseUrl$m3u8", "Auto", "m3u8")), null)
         }
-    } catch (_: Exception) {}
 
-    // Regex fallback for m3u8
-    val m3u8 = Regex("""(/mobile/hls/[^\s"']+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
-    if (!m3u8.isNullOrBlank()) {
-        return PlaylistResult(listOf(Source("$MAIN_URL$m3u8", "Auto", "m3u8")), null)
-    }
+        val fullUrl = Regex("""(https?://[^\s"'<>\}\]\\]+\.m3u8[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
+        if (!fullUrl.isNullOrBlank()) {
+            return PlaylistResult(listOf(Source(fullUrl, "Auto", "m3u8")), null)
+        }
 
-    val fullUrl = Regex("""(https?://[^\s"'<>\}\]\\]+\.m3u8[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
-    if (!fullUrl.isNullOrBlank()) {
-        return PlaylistResult(listOf(Source(fullUrl, "Auto", "m3u8")), null)
+        // If response was empty/invalid on first attempt, retry with fresh bypass
+        if (attempt == 1 && (response.isBlank() || response.contains("verify") || response.contains("blocked"))) {
+            invalidateCache()
+            resolveMainUrl()
+            val newBypass = ensureBypass()
+            if (newBypass.cookie.isEmpty()) return null
+            cookies["t_hash_t"] = newBypass.cookie
+            if (newBypass.addhash.isNotEmpty()) cookies["addhash"] = newBypass.addhash
+            if (newBypass.usertoken.isNotEmpty()) cookies["usertoken"] = newBypass.usertoken
+            continue
+        }
+
+        break
     }
 
     return null
@@ -271,7 +354,7 @@ suspend fun resolveNewTvApi(): String {
     for (encoded in NEWTV_DOMAINS) {
         val base = b64(encoded).trimEnd('/')
         try {
-            val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS).text
+            val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS, timeout = 6L).text
             val hash = tryParseJson<TokenResponse>(text)?.token_hash
             if (!hash.isNullOrBlank()) {
                 resolvedApiUrl = b64(hash).trimEnd('/')
@@ -283,15 +366,29 @@ suspend fun resolveNewTvApi(): String {
 }
 
 suspend fun getNewTvLink(id: String, ott: String): String? {
-    val apiBase = resolveNewTvApi()
-    if (apiBase.isEmpty()) return null
-    val headers = NEWTV_HEADERS.toMutableMap().apply {
-        put("Ott", ott)
-        put("Usertoken", "")
+    // Try up to 2 times — once with cached API URL, once after re-resolving
+    for (attempt in 1..2) {
+        val apiBase = if (attempt == 1) resolveNewTvApi() else {
+            resolvedApiUrl = "" // Clear cache to force re-resolution
+            resolveNewTvApi()
+        }
+        if (apiBase.isEmpty()) continue
+
+        val headers = NEWTV_HEADERS.toMutableMap().apply {
+            put("Ott", ott)
+            put("Usertoken", "")
+        }
+        try {
+            val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers, timeout = 10L).text
+            val response = tryParseJson<PlayerResponse>(text)
+            if (!response?.video_link.isNullOrBlank()) {
+                return response!!.video_link
+            }
+        } catch (_: Exception) {
+            if (attempt == 1) continue // Retry with fresh resolution
+        }
     }
-    val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
-    val response = tryParseJson<PlayerResponse>(text)
-    return response?.video_link
+    return null
 }
 
 data class TokenResponse(val token_hash: String? = null)

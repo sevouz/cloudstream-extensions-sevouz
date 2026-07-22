@@ -15,6 +15,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "ta"
     override var mainUrl = MAIN_URL
+        get() = MAIN_URL // Always use the dynamically resolved URL
     override val hasMainPage = true
 
     abstract val ott: String
@@ -201,9 +202,17 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         }
 
         // Also try playlist API (may have subtitles)
-        val result = try {
+        var result = try {
             getPlaylistLink(ld.id, ott, playlistPath)
         } catch (_: Exception) { null }
+
+        // If both failed, invalidate cache and retry once
+        if (newTvM3u8.isNullOrBlank() && result == null) {
+            invalidateCache()
+            try {
+                result = getPlaylistLink(ld.id, ott, playlistPath)
+            } catch (_: Exception) {}
+        }
 
         if (result != null) {
             val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
