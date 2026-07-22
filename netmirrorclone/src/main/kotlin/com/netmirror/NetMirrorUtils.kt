@@ -287,21 +287,35 @@ private val NEWTV_DOMAINS = listOf(
 private fun b64(s: String): String = String(Base64.decode(s, Base64.DEFAULT))
 
 @Volatile private var resolvedApiUrl: String = ""
+@Volatile private var apiResolvedTime: Long = 0L
+private val apiMutex = Mutex()
 
 suspend fun resolveNewTvApi(): String {
-    if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
-    for (encoded in NEWTV_DOMAINS) {
-        val base = b64(encoded).trimEnd('/')
-        try {
-            val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS).text
-            val hash = tryParseJson<TokenResponse>(text)?.token_hash
-            if (!hash.isNullOrBlank()) {
-                resolvedApiUrl = b64(hash).trimEnd('/')
-                return resolvedApiUrl
-            }
-        } catch (_: Exception) {}
+    // Cache for 12 hours
+    if (resolvedApiUrl.isNotBlank() && System.currentTimeMillis() - apiResolvedTime < 43_200_000) {
+        return resolvedApiUrl
     }
-    return ""
+
+    return apiMutex.withLock {
+        // Double-check after lock
+        if (resolvedApiUrl.isNotBlank() && System.currentTimeMillis() - apiResolvedTime < 43_200_000) {
+            return@withLock resolvedApiUrl
+        }
+
+        for (encoded in NEWTV_DOMAINS) {
+            val base = b64(encoded).trimEnd('/')
+            try {
+                val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS).text
+                val hash = tryParseJson<TokenResponse>(text)?.token_hash
+                if (!hash.isNullOrBlank()) {
+                    resolvedApiUrl = b64(hash).trimEnd('/')
+                    apiResolvedTime = System.currentTimeMillis()
+                    return@withLock resolvedApiUrl
+                }
+            } catch (_: Exception) {}
+        }
+        ""
+    }
 }
 
 suspend fun getNewTvLink(id: String, ott: String): String? {

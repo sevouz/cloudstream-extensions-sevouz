@@ -191,7 +191,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Try NewTV API (ad-free streams)
+        // Try NewTV API FIRST — no bypass needed, single request, ad-free
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
             callback.invoke(
@@ -202,24 +202,22 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             hasLink = true
         }
 
-        // Try playlist API for subtitles (and video as fallback)
-        val result = try {
-            getPlaylistLink(ld.id, ott, playlistPath)
-        } catch (_: Exception) { null }
+        // Only try playlist API if NewTV failed — this requires bypass (more requests)
+        if (!hasLink) {
+            val result = try {
+                getPlaylistLink(ld.id, ott, playlistPath)
+            } catch (_: Exception) { null }
 
-        if (result != null) {
-            // Always grab subtitles
-            result.tracks?.forEach { track ->
-                val url = track.file ?: return@forEach
-                val label = track.label ?: "Unknown"
-                val kind = track.kind ?: ""
-                if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
-                    subtitleCallback.invoke(SubtitleFile(label, url))
+            if (result != null) {
+                result.tracks?.forEach { track ->
+                    val url = track.file ?: return@forEach
+                    val label = track.label ?: "Unknown"
+                    val kind = track.kind ?: ""
+                    if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
+                        subtitleCallback.invoke(SubtitleFile(label, url))
+                    }
                 }
-            }
 
-            // Only use playlist video if NewTV didn't work
-            if (!hasLink) {
                 val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
                 if (source != null) {
                     val url = source.file!!
