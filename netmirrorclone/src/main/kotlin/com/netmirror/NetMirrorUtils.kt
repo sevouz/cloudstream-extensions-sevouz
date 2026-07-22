@@ -183,15 +183,15 @@ private suspend fun doBypass(): BypassResult {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    // Wait for ad to "complete" — 10 seconds (minimum needed for server to accept)
-    kotlinx.coroutines.delay(10000)
+    // Wait for ad to "complete" — 20 seconds (server requires this minimum)
+    kotlinx.coroutines.delay(20000)
 
     // Step 4: POST to verify2.php with addhash to confirm ad was watched
-    // Retry up to 6 times with 1.5-second delays (was 10x2s = max 20s, now 6x1.5s = max 9s)
+    // Retry up to 8 times with 2-second delays
     var usertoken = ""
     var finalCookie = cookie
-    for (attempt in 1..6) {
-        kotlinx.coroutines.delay(1500)
+    for (attempt in 1..8) {
+        kotlinx.coroutines.delay(2000)
         try {
             val verifyResp = app.post(
                 "$MAIN_URL/mobile/verify2.php",
@@ -260,11 +260,23 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Play
             return null
         }
 
+        // Detect rate-limit/ad penalty responses — reject them
+        if (response.contains("too many requests", ignoreCase = true) ||
+            response.contains("stop abuse", ignoreCase = true) ||
+            response.contains("rate limit", ignoreCase = true)) {
+            return null
+        }
+
         // Try JSON array format: [{"sources":[...],"tracks":[...]}]
         try {
             val playlist = tryParseJson<List<PlayListItem>>(response)
             val item = playlist?.firstOrNull()
             if (item != null && !item.sources.isNullOrEmpty()) {
+                // Check if the source URL itself is a penalty/ad stream
+                val sourceUrl = item.sources.firstOrNull()?.file ?: ""
+                if (sourceUrl.contains("adv") || sourceUrl.contains("penalty") || sourceUrl.contains("ratelimit")) {
+                    return null
+                }
                 return PlaylistResult(item.sources, item.tracks)
             }
         } catch (_: Exception) {}
@@ -273,6 +285,10 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Play
         try {
             val item = tryParseJson<PlayListItem>(response)
             if (item != null && !item.sources.isNullOrEmpty()) {
+                val sourceUrl = item.sources.firstOrNull()?.file ?: ""
+                if (sourceUrl.contains("adv") || sourceUrl.contains("penalty") || sourceUrl.contains("ratelimit")) {
+                    return null
+                }
                 return PlaylistResult(item.sources, item.tracks)
             }
         } catch (_: Exception) {}
@@ -373,10 +389,19 @@ suspend fun getNewTvLink(id: String, ott: String): String? {
         }
         if (apiBase.isEmpty()) continue
 
+        val bypass = cachedBypass
         val headers = NEWTV_HEADERS.toMutableMap().apply {
             put("Ott", ott)
-            put("Usertoken", "")
+            put("Usertoken", bypass?.usertoken ?: "")
         }
+        // Also pass bypass cookie if available
+        if (bypass != null && bypass.cookie.isNotEmpty()) {
+            val cookieParts = mutableListOf("t_hash_t=${bypass.cookie}", "hd=on", "ott=$ott")
+            if (bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
+            if (bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
+            headers["Cookie"] = cookieParts.joinToString("; ")
+        }
+
         try {
             val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
             val response = tryParseJson<PlayerResponse>(text)

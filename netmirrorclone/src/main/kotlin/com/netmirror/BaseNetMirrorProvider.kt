@@ -190,8 +190,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val ld = parseJson<LoadData>(data)
+        var hasLink = false
 
-        // Try NewTV API first (ad-free streams)
+        // Try NewTV API first (ad-free streams — no rate limit overlay)
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
             callback.invoke(
@@ -199,47 +200,57 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     this.referer = MAIN_URL
                 }
             )
+            hasLink = true
         }
 
-        // Also try playlist API (may have subtitles)
-        var result = try {
+        // Try playlist API for subtitles and as fallback
+        // Only use the video link from playlist if NewTV failed
+        val result = try {
             getPlaylistLink(ld.id, ott, playlistPath)
         } catch (_: Exception) { null }
 
-        // If both failed, invalidate cache and retry once
-        if (newTvM3u8.isNullOrBlank() && result == null) {
-            invalidateCache()
-            try {
-                result = getPlaylistLink(ld.id, ott, playlistPath)
-            } catch (_: Exception) {}
-        }
-
         if (result != null) {
-            val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
-            if (source != null) {
-                val url = source.file!!
-                val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
-                callback.invoke(
-                    newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
-                        this.referer = MAIN_URL
-                    }
-                )
-            }
-
-            // Add subtitles
+            // Always grab subtitles from playlist response
             result.tracks?.forEach { track ->
                 val url = track.file ?: return@forEach
                 val label = track.label ?: "Unknown"
                 val kind = track.kind ?: ""
                 if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
-                    subtitleCallback.invoke(
-                        SubtitleFile(label, url)
+                    subtitleCallback.invoke(SubtitleFile(label, url))
+                }
+            }
+
+            // Only use playlist video if NewTV didn't work
+            if (!hasLink) {
+                val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
+                if (source != null) {
+                    val url = source.file!!
+                    val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
+                    callback.invoke(
+                        newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
+                            this.referer = MAIN_URL
+                        }
                     )
+                    hasLink = true
                 }
             }
         }
 
-        return !newTvM3u8.isNullOrBlank() || result != null
+        // If nothing worked, invalidate and retry NewTV once more
+        if (!hasLink) {
+            invalidateCache()
+            val retryM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
+            if (!retryM3u8.isNullOrBlank()) {
+                callback.invoke(
+                    newExtractorLink(name, "$name NewTV", retryM3u8, type = ExtractorLinkType.M3U8) {
+                        this.referer = MAIN_URL
+                    }
+                )
+                hasLink = true
+            }
+        }
+
+        return hasLink
     }
 
     private fun getQualityFromLabel(label: String): Int {
