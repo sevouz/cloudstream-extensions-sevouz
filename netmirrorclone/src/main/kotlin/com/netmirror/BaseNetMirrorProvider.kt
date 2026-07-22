@@ -27,7 +27,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
-        mainUrl = MAIN_URL // Sync with resolved domain
         val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
         if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
@@ -192,7 +191,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Try NewTV API first (ad-free streams — no rate limit overlay)
+        // Try NewTV API (ad-free streams)
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
             callback.invoke(
@@ -203,14 +202,13 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             hasLink = true
         }
 
-        // Try playlist API for subtitles and as fallback
-        // Only use the video link from playlist if NewTV failed
+        // Try playlist API for subtitles (and video as fallback)
         val result = try {
             getPlaylistLink(ld.id, ott, playlistPath)
         } catch (_: Exception) { null }
 
         if (result != null) {
-            // Always grab subtitles from playlist response
+            // Always grab subtitles
             result.tracks?.forEach { track ->
                 val url = track.file ?: return@forEach
                 val label = track.label ?: "Unknown"
@@ -233,20 +231,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     )
                     hasLink = true
                 }
-            }
-        }
-
-        // If nothing worked, invalidate and retry NewTV once more
-        if (!hasLink) {
-            invalidateCache()
-            val retryM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
-            if (!retryM3u8.isNullOrBlank()) {
-                callback.invoke(
-                    newExtractorLink(name, "$name NewTV", retryM3u8, type = ExtractorLinkType.M3U8) {
-                        this.referer = MAIN_URL
-                    }
-                )
-                hasLink = true
             }
         }
 
