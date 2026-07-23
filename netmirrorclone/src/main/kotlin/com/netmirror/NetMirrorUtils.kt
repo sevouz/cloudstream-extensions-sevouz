@@ -286,9 +286,18 @@ suspend fun resolveNewTvApi(): String {
 suspend fun getNewTvLink(id: String, ott: String): String? {
     val apiBase = resolveNewTvApi()
     if (apiBase.isEmpty()) return null
+
+    // Get cf_clearance + OTP from the netmirror.gg/tv verification (solves Cloudflare via WebView)
+    val cfOtp = try { ensureCfAndOtp() } catch (_: Exception) { null }
+    val cfClearance = cfOtp?.first ?: cachedCfClearance
+    val otp = cfOtp?.second ?: cachedOtp
+
     val headers = NEWTV_HEADERS.toMutableMap().apply {
         put("Ott", ott)
-        put("Usertoken", "")
+        put("Usertoken", otp)
+        if (cfClearance.isNotEmpty()) {
+            put("Cookie", "cf_clearance=$cfClearance")
+        }
     }
     val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
     val response = tryParseJson<PlayerResponse>(text)
