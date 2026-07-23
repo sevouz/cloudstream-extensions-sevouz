@@ -15,10 +15,11 @@ import com.lagradost.cloudstream3.APIHolder.unixTime
 abstract class BaseNetMirrorProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "ta"
-    override var mainUrl = MAIN_URL
+    // Use netmirror.gg as mainUrl — CloudStream auto-triggers CF verification for mainUrl
+    override var mainUrl = "https://netmirror.gg"
     override val hasMainPage = true
 
-    // CloudflareKiller handles the Cloudflare verification WebView (netmirror.gg)
+    // CloudflareKiller handles the Cloudflare verification WebView
     private val cfKiller by lazy { CloudflareKiller() }
 
     abstract val ott: String
@@ -51,10 +52,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         // Try with quick (non-blocking) cookies first
         var doc = app.get(
-            "$mainUrl/mobile/home?app=1",
+            "$MAIN_URL/mobile/home?app=1",
             cookies = quickCookies(),
             headers = BROWSER_HEADERS,
-            referer = "$mainUrl/mobile/home?app=1"
+            referer = "$MAIN_URL/mobile/home?app=1"
         ).document
         var items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
@@ -65,10 +66,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         // If quick cookies didn't work (empty results), fallback to full bypass
         if (items.isEmpty()) {
             doc = app.get(
-                "$mainUrl/mobile/home?app=1",
+                "$MAIN_URL/mobile/home?app=1",
                 cookies = cookies(),
                 headers = BROWSER_HEADERS,
-                referer = "$mainUrl/mobile/home?app=1"
+                referer = "$MAIN_URL/mobile/home?app=1"
             ).document
             items = doc.select(".tray-container, #top10").mapNotNull { section ->
                 val name = section.select("h2, span").text()
@@ -85,21 +86,21 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         if (id.isBlank()) return null
         return newAnimeSearchResponse("", Id(id).toJson()) {
             posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+            posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val text = app.get(
-            "$mainUrl/mobile/$searchPath?s=$query&t=$unixTime",
-            referer = "$mainUrl/home",
+            "$MAIN_URL/mobile/$searchPath?s=$query&t=$unixTime",
+            referer = "$MAIN_URL/home",
             cookies = cookies()
         ).text
         val data = tryParseJson<SearchData>(text) ?: return emptyList()
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
                 posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
             }
         }
     }
@@ -107,9 +108,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val id = parseJson<Id>(url).id
         val text = app.get(
-            "$mainUrl/mobile/$postPath?id=$id&t=$unixTime",
+            "$MAIN_URL/mobile/$postPath?id=$id&t=$unixTime",
             headers = BROWSER_HEADERS,
-            referer = "$mainUrl/home",
+            referer = "$MAIN_URL/home",
             cookies = cookies()
         ).text
         val data = tryParseJson<PostData>(text) ?: return null
@@ -121,7 +122,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
                 posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
             }
         }
 
@@ -149,7 +150,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
             backgroundPosterUrl = "https://imgcdn.kim/$imgPrefix/h/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+            posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
             plot = data.desc
             year = data.year.toIntOrNull()
             tags = genre
@@ -163,9 +164,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         var pg = page
         while (true) {
             val text = app.get(
-                "$mainUrl/mobile/$episodesPath?s=$sid&series=$eid&t=$unixTime&page=$pg",
+                "$MAIN_URL/mobile/$episodesPath?s=$sid&series=$eid&t=$unixTime&page=$pg",
                 headers = BROWSER_HEADERS,
-                referer = "$mainUrl/home",
+                referer = "$MAIN_URL/home",
                 cookies = cookies()
             ).text
             val data = tryParseJson<EpisodesData>(text) ?: break
@@ -193,15 +194,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Step 1: Solve Cloudflare challenge on netmirror.gg via WebView
-        // This opens the verification page the user must solve (like CNC Verse)
+        // Step 1: Ensure Cloudflare verification via cfKiller on mainUrl (netmirror.gg)
         try {
-            val cfResolver = WebViewResolver(
-                interceptUrl = Regex("""netmirror\.gg"""),
-                useOkhttp = false,
-                timeout = 60_000L
-            )
-            app.get(CF_VERIFY_URL, interceptor = cfResolver)
+            app.get("$MAIN_URL/mobile/home?app=1", interceptor = cfKiller, headers = BROWSER_HEADERS)
         } catch (_: Exception) {}
 
         // Step 2: Try NewTV API — single request, ad-free
