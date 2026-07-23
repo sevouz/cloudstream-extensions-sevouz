@@ -15,11 +15,9 @@ import com.lagradost.cloudstream3.APIHolder.unixTime
 abstract class BaseNetMirrorProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "ta"
-    // Use netmirror.gg as mainUrl — CloudStream auto-triggers CF verification for mainUrl
-    override var mainUrl = "https://netmirror.gg"
+    override var mainUrl = MAIN_URL
     override val hasMainPage = true
 
-    // CloudflareKiller handles the Cloudflare verification WebView
     private val cfKiller by lazy { CloudflareKiller() }
 
     abstract val ott: String
@@ -194,12 +192,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Step 1: Ensure Cloudflare verification via cfKiller on mainUrl (netmirror.gg)
-        try {
-            app.get("$MAIN_URL/mobile/home?app=1", interceptor = cfKiller, headers = BROWSER_HEADERS)
-        } catch (_: Exception) {}
-
-        // Step 2: Try NewTV API — single request, ad-free
+        // Try NewTV API — single request, ad-free
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
             callback.invoke(
