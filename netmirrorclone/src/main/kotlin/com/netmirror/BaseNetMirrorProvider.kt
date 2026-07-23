@@ -1,14 +1,12 @@
 package com.netmirror
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import okhttp3.Interceptor
-import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
@@ -17,8 +15,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override var lang = "ta"
     override var mainUrl = MAIN_URL
     override val hasMainPage = true
-
-    private val cfKiller by lazy { CloudflareKiller() }
 
     abstract val ott: String
     abstract val imgPrefix: String
@@ -192,18 +188,17 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Force Cloudflare verification via WebView on the verify page
-        // After solving, the server marks our IP as verified for 24h
-        if (cfKiller.savedCookies["net77.cc"] == null) {
-            try {
-                val verifyResolver = WebViewResolver(
-                    interceptUrl = Regex("""net77\.cc/mobile|net77\.cc/home|net77\.cc/$"""),
-                    useOkhttp = false,
-                    timeout = 60_000L
-                )
-                app.get("$MAIN_URL/verify2", interceptor = verifyResolver, headers = BROWSER_HEADERS)
-            } catch (_: Exception) {}
-        }
+        // Trigger Cloudflare verification on net77.cc/verify2
+        // WebView renders the CF challenge page, user solves it, server marks IP as verified
+        try {
+            val verifyResolver = WebViewResolver(
+                interceptUrl = Regex("""net77\.cc/mobile|net77\.cc/home|net77\.cc/$|net77\.cc/tv"""),
+                additionalUrls = listOf(Regex("""net77\.cc""")),
+                useOkhttp = false,
+                timeout = 60_000L
+            )
+            app.get(url = "$MAIN_URL/verify2", interceptor = verifyResolver)
+        } catch (_: Exception) {}
 
         // Try NewTV API — single request, ad-free
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
@@ -261,7 +256,18 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
-        return cfKiller
+        return Interceptor { chain ->
+            val req = chain.request()
+            val cookieParts = mutableListOf("hd=on", "ott=$ott", "user_token=233123f803cf02184bf6c67e149cdd50")
+            val bypass = cachedBypass
+            if (bypass != null && bypass.cookie.isNotEmpty()) {
+                cookieParts.add(0, "t_hash_t=${bypass.cookie}")
+            }
+            val newReq = req.newBuilder()
+                .header("Cookie", cookieParts.joinToString("; "))
+                .build()
+            chain.proceed(newReq)
+        }
     }
 
     data class Id(val id: String)
