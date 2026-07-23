@@ -286,9 +286,12 @@ suspend fun resolveNewTvApi(): String {
 // Default shared OTP used by the NewTV API (from CNC Verse)
 private const val DEFAULT_OTP = "109400"
 
-@Volatile private var savedOtp: String = ""
-// usertoken cache per ott: ott -> (token, timestamp)
-private val savedUserTokens = mutableMapOf<String, Pair<String, Long>>()
+// Persisted across restarts via BypassStorage
+object NewTvStore {
+    @Volatile var otp: String = ""
+    // usertoken cache per ott: ott -> (token, timestamp)
+    val tokens = mutableMapOf<String, Pair<String, Long>>()
+}
 
 private fun otpHeaders(otp: String) = mapOf(
     "accept" to "application/json, text/plain, */*",
@@ -324,6 +327,7 @@ suspend fun fetchNetmirrorTvHtml(): String {
     if (isCloudflare) {
         val cf = solveCloudflareInWebView(NETMIRROR_TV_URL) ?: return html
         cachedCfClearance = cf
+        BypassStorage.saveCfClearance(cf)
         val headers2 = headers.toMutableMap().apply { put("Cookie", "cf_clearance=$cf") }
         return try { app.get(NETMIRROR_TV_URL, headers = headers2).text } catch (_: Exception) { html }
     }
@@ -337,7 +341,7 @@ suspend fun fetchNetmirrorTvHtml(): String {
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean): String {
     // Return cached token (valid 12h)
     if (!forceRefresh) {
-        val cached = savedUserTokens[ott]
+        val cached = NewTvStore.tokens[ott]
         if (cached != null && cached.first.isNotEmpty() &&
             System.currentTimeMillis() - cached.second < 43_200_000
         ) {
@@ -345,7 +349,7 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
         }
     }
 
-    var currentOtp = if (savedOtp.isNotEmpty()) savedOtp else DEFAULT_OTP
+    var currentOtp = if (NewTvStore.otp.isNotEmpty()) NewTvStore.otp else DEFAULT_OTP
 
     var otpResponse = try {
         tryParseJson<NewTvOtpResponse>(
@@ -367,7 +371,8 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
                 .replace("'", "")
             if (newOtp.isNotEmpty()) {
                 currentOtp = newOtp
-                savedOtp = newOtp
+                NewTvStore.otp = newOtp
+                BypassStorage.saveOtp(newOtp)
                 otpResponse = try {
                     tryParseJson<NewTvOtpResponse>(
                         app.get("$apiBase/newtv/otp.php", headers = otpHeaders(currentOtp)).text
@@ -379,7 +384,8 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
 
     val token = otpResponse?.usertoken ?: ""
     if (token.isNotEmpty()) {
-        savedUserTokens[ott] = token to System.currentTimeMillis()
+        NewTvStore.tokens[ott] = token to System.currentTimeMillis()
+        BypassStorage.saveTokens(NewTvStore.tokens)
     }
     return token
 }

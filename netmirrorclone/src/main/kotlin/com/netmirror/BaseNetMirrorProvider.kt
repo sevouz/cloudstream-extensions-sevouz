@@ -189,8 +189,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val ld = parseJson<LoadData>(data)
+        var hasLink = false
 
-        // Try NewTV API first (ad-free streams)
+        // Primary: NewTV API (ad-free, OTP-authenticated)
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
             callback.invoke(
@@ -198,26 +199,30 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     this.referer = MAIN_URL
                 }
             )
+            hasLink = true
         }
 
-        // Also try playlist API (may have subtitles)
+        // Playlist API — used for subtitles always, and as a video fallback only if NewTV failed
         val result = try {
             getPlaylistLink(ld.id, ott, playlistPath)
         } catch (_: Exception) { null }
 
         if (result != null) {
-            val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
-            if (source != null) {
-                val url = source.file!!
-                val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
-                callback.invoke(
-                    newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
-                        this.referer = MAIN_URL
-                    }
-                )
+            if (!hasLink) {
+                val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
+                if (source != null) {
+                    val url = source.file!!
+                    val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
+                    callback.invoke(
+                        newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
+                            this.referer = MAIN_URL
+                        }
+                    )
+                    hasLink = true
+                }
             }
 
-            // Add subtitles
+            // Subtitles (from playlist response)
             result.tracks?.forEach { track ->
                 val url = track.file ?: return@forEach
                 val label = track.label ?: "Unknown"
@@ -230,7 +235,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             }
         }
 
-        return !newTvM3u8.isNullOrBlank() || result != null
+        return hasLink
     }
 
     private fun getQualityFromLabel(label: String): Int {
