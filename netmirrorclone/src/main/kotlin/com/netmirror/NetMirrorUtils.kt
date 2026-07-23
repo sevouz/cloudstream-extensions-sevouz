@@ -324,11 +324,19 @@ suspend fun fetchNetmirrorTvHtml(): String {
             html.contains("cloudflare", true)
         ))
 
-    if (isCloudflare) {
-        val cf = solveCloudflareInWebView(NETMIRROR_TV_URL) ?: return html
-        cachedCfClearance = cf
-        BypassStorage.saveCfClearance(cf)
-        val headers2 = headers.toMutableMap().apply { put("Cookie", "cf_clearance=$cf") }
+    // If okhttp already returned the real page (has const otp), use it
+    if (Regex("""const\s+otp\s*=""").containsMatchIn(html)) return html
+
+    if (isCloudflare || !Regex("""const\s+otp\s*=""").containsMatchIn(html)) {
+        val result = solveCloudflareInWebView(NETMIRROR_TV_URL) ?: return html
+        if (result.cfClearance.isNotEmpty()) {
+            cachedCfClearance = result.cfClearance
+            BypassStorage.saveCfClearance(result.cfClearance)
+        }
+        // Prefer the HTML captured directly from the WebView (real browser context)
+        if (result.html.isNotEmpty()) return result.html
+        // Fallback: re-fetch via okhttp with cf_clearance
+        val headers2 = headers.toMutableMap().apply { put("Cookie", "cf_clearance=${result.cfClearance}") }
         return try { app.get(NETMIRROR_TV_URL, headers = headers2).text } catch (_: Exception) { html }
     }
     return html
@@ -376,6 +384,7 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
     if (needFresh) {
         val tvHtml = fetchNetmirrorTvHtml()
         val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
+            ?: Regex("""const\s+otp\s*=\s*\[([^\]]*)]""").find(tvHtml)
         if (match != null) {
             val newOtp = match.groupValues[1]
                 .replace(Regex("""\s*,\s*"""), "")

@@ -33,6 +33,8 @@ const val NETMIRROR_TV_URL = "https://netmirror.gg/tv"
 // Cached cf_clearance cookie
 @Volatile var cachedCfClearance: String = ""
 
+data class CfResult(val html: String, val cfClearance: String)
+
 fun cfClearanceFrom(url: String): String {
     return try {
         val cookies = CookieManager.getInstance().getCookie(url) ?: ""
@@ -48,17 +50,17 @@ fun cfClearanceFrom(url: String): String {
  * On TV, shows a movable cursor controlled by the D-pad.
  */
 @SuppressLint("SetJavaScriptEnabled")
-suspend fun solveCloudflareInWebView(url: String = NETMIRROR_TV_URL): String? {
+suspend fun solveCloudflareInWebView(url: String = NETMIRROR_TV_URL): CfResult? {
     val activity = CommonActivity.activity ?: return null
 
     return withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { cont ->
             var resolved = false
 
-            fun finish(cf: String?) {
+            fun finish(result: CfResult?) {
                 if (resolved) return
                 resolved = true
-                if (cont.isActive) cont.resume(cf)
+                if (cont.isActive) cont.resume(result)
             }
 
             try {
@@ -78,12 +80,29 @@ suspend fun solveCloudflareInWebView(url: String = NETMIRROR_TV_URL): String? {
 
                 fun extractAndFinish(dialog: Dialog?) {
                     if (resolved) return
-                    val cf = cfClearanceFrom(url)
-                    if (cf.isNotEmpty()) {
-                        cachedCfClearance = cf
-                        try { wv.destroy() } catch (_: Exception) {}
-                        try { dialog?.dismiss() } catch (_: Exception) {}
-                        finish(cf)
+                    // Read the page HTML from the WebView itself (real browser context).
+                    wv.evaluateJavascript(
+                        "(function(){return document.documentElement.outerHTML;})();"
+                    ) { raw ->
+                        if (resolved || raw == null) return@evaluateJavascript
+                        val html = raw
+                            .replace("\\u003C", "<")
+                            .replace("\\u003E", ">")
+                            .replace("\\\"", "\"")
+                            .replace("\\n", "\n")
+                            .replace("\\/", "/")
+                        val isChallenge = html.contains("Just a moment", true) ||
+                            html.contains("Checking if the site connection is secure", true) ||
+                            html.contains("cf-browser-verification", true)
+                        val hasOtp = Regex("""const\s+otp\s*=""").containsMatchIn(html)
+                        val cf = cfClearanceFrom(url)
+                        // Finish only when the real /tv page loaded (has const otp), past the challenge
+                        if (hasOtp || (cf.isNotEmpty() && !isChallenge && html.length > 2000)) {
+                            if (cf.isNotEmpty()) cachedCfClearance = cf
+                            try { wv.destroy() } catch (_: Exception) {}
+                            try { dialog?.dismiss() } catch (_: Exception) {}
+                            finish(CfResult(html, cf))
+                        }
                     }
                 }
 
