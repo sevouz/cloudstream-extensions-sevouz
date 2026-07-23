@@ -14,6 +14,9 @@ import java.util.UUID
 @Volatile var MAIN_URL = "https://net52.cc"
     private set
 
+// Cloudflare-protected entry point (used for cf_clearance cookie)
+const val CF_VERIFY_URL = "https://netmirror.gg"
+
 val BROWSER_HEADERS = mapOf(
     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",

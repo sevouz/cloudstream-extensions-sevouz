@@ -17,6 +17,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override var mainUrl = MAIN_URL
     override val hasMainPage = true
 
+    // CloudflareKiller handles the Cloudflare verification WebView (netmirror.gg)
+    private val cfKiller by lazy { CloudflareKiller() }
+
     abstract val ott: String
     abstract val imgPrefix: String
     abstract val epImgPrefix: String
@@ -45,12 +48,20 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Trigger Cloudflare verification on netmirror.gg (opens WebView if needed)
+        if (cachedBypass == null) {
+            try {
+                app.get(CF_VERIFY_URL, interceptor = cfKiller)
+            } catch (_: Exception) {}
+        }
+
         // Try with quick (non-blocking) cookies first
         var doc = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = quickCookies(),
             headers = BROWSER_HEADERS,
-            referer = "$mainUrl/mobile/home?app=1"
+            referer = "$mainUrl/mobile/home?app=1",
+            interceptor = cfKiller
         ).document
         var items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
@@ -244,22 +255,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         }
     }
 
-    private val cloudflareKiller by lazy { CloudflareKiller() }
-
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
-        return Interceptor { chain ->
-            val req = chain.request()
-            val bypass = cachedBypass
-            val cookieParts = mutableListOf("hd=on", "ott=$ott", "user_token=233123f803cf02184bf6c67e149cdd50")
-            if (bypass != null && bypass.cookie.isNotEmpty()) {
-                cookieParts.add(0, "t_hash_t=${bypass.cookie}")
-                if (bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
-            }
-            val newReq = req.newBuilder()
-                .header("Cookie", cookieParts.joinToString("; "))
-                .build()
-            chain.proceed(newReq)
-        }
+        return cfKiller
     }
 
     data class Id(val id: String)
