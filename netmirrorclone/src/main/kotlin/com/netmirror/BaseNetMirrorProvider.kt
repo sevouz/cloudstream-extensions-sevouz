@@ -27,21 +27,19 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
-        val c = mutableMapOf("ott" to ott, "hd" to "on")
+        val c = mutableMapOf("ott" to ott, "hd" to "on", "user_token" to "233123f803cf02184bf6c67e149cdd50")
         if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
         if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
-        if (bypass.usertoken.isNotEmpty()) c["usertoken"] = bypass.usertoken
         return c
     }
 
     /** Quick cookies using cached bypass if available, without blocking */
     private fun quickCookies(): Map<String, String> {
         val bypass = cachedBypass
-        val c = mutableMapOf("ott" to ott, "hd" to "on")
+        val c = mutableMapOf("ott" to ott, "hd" to "on", "user_token" to "233123f803cf02184bf6c67e149cdd50")
         if (bypass != null && bypass.cookie.isNotEmpty()) {
             c["t_hash_t"] = bypass.cookie
             if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
-            if (bypass.usertoken.isNotEmpty()) c["usertoken"] = bypass.usertoken
         }
         return c
     }
@@ -252,17 +250,15 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         return Interceptor { chain ->
             val req = chain.request()
             val bypass = cachedBypass
+            val cookieParts = mutableListOf("hd=on", "ott=$ott", "user_token=233123f803cf02184bf6c67e149cdd50")
             if (bypass != null && bypass.cookie.isNotEmpty()) {
-                val cookieParts = mutableListOf("t_hash_t=${bypass.cookie}", "hd=on", "ott=$ott")
+                cookieParts.add(0, "t_hash_t=${bypass.cookie}")
                 if (bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
-                if (bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
-                val newReq = req.newBuilder()
-                    .header("Cookie", cookieParts.joinToString("; "))
-                    .build()
-                chain.proceed(newReq)
-            } else {
-                chain.proceed(req)
             }
+            val newReq = req.newBuilder()
+                .header("Cookie", cookieParts.joinToString("; "))
+                .build()
+            chain.proceed(newReq)
         }
     }
 

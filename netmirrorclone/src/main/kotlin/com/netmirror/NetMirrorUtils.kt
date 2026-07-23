@@ -61,123 +61,66 @@ fun invalidateCache() {
     resolvedApiUrl = ""
 }
 
+// Hardcoded user token — this tells the server "ad was watched"
+private const val USER_TOKEN = "233123f803cf02184bf6c67e149cdd50"
+
 private suspend fun doBypass(): BypassResult {
-
-    // Step 1: GET homepage to get cookie and check for ad wall
-    val homeResp = app.get(
-        "$MAIN_URL/mobile/home?app=1",
-        headers = BROWSER_HEADERS,
-        referer = "$MAIN_URL/mobile/home?app=1"
-    )
+    // Simple bypass: POST to verify.php to get t_hash_t cookie
     var cookie = ""
-    homeResp.okhttpResponse.headers("Set-Cookie").forEach { h ->
-        if (h.contains("t_hash_t=")) {
-            cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+    try {
+        val client = OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        val formBody = FormBody.Builder()
+            .add("g-recaptcha-response", UUID.randomUUID().toString())
+            .build()
+        val request = Request.Builder()
+            .url("$MAIN_URL/verify.php")
+            .post(formBody)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+            .header("Referer", "$MAIN_URL/verify2")
+            .header("Origin", MAIN_URL)
+            .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", "\"Windows\"")
+            .header("Sec-Fetch-Dest", "document")
+            .header("Sec-Fetch-Mode", "navigate")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-User", "?1")
+            .header("Upgrade-Insecure-Requests", "1")
+            .build()
+        val response = client.newCall(request).execute()
+        response.headers("Set-Cookie").forEach { h ->
+            if (h.contains("t_hash_t=")) {
+                cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+            }
         }
-    }
-    if (cookie.isEmpty()) {
-        cookie = homeResp.cookies["t_hash_t"] ?: ""
-    }
+        response.close()
+    } catch (_: Exception) {}
 
-    // Also try verify.php if homepage didn't give cookie
+    // Fallback: try GET homepage for cookie
     if (cookie.isEmpty()) {
         try {
-            val client = OkHttpClient.Builder()
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .build()
-            val formBody = FormBody.Builder()
-                .add("g-recaptcha-response", UUID.randomUUID().toString())
-                .build()
-            val request = Request.Builder()
-                .url("$MAIN_URL/verify.php")
-                .post(formBody)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-                .header("Referer", "$MAIN_URL/verify2")
-                .header("Origin", MAIN_URL)
-                .build()
-            val response = client.newCall(request).execute()
-            response.headers("Set-Cookie").forEach { h ->
+            val homeResp = app.get(
+                "$MAIN_URL/mobile/home?app=1",
+                headers = BROWSER_HEADERS,
+                referer = "$MAIN_URL/mobile/home?app=1"
+            )
+            homeResp.okhttpResponse.headers("Set-Cookie").forEach { h ->
                 if (h.contains("t_hash_t=")) {
                     cookie = h.substringAfter("t_hash_t=").substringBefore(";")
                 }
             }
-            response.close()
-        } catch (_: Exception) {}
-    }
-
-    if (cookie.isEmpty()) return BypassResult("", "", "", "")
-
-    val doc = homeResp.document
-    val html = doc.html()
-
-    // Check if there's NO ad wall
-    if (!html.contains("We Need Support") || !html.contains("open-support")) {
-        val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
-        val result = BypassResult(cookie, "", "", dataTime)
-        cachedBypass = result
-        cachedBypassTime = System.currentTimeMillis()
-        BypassStorage.save(result)
-        return result
-    }
-
-    // Ad wall exists - extract addhash
-    val addhash = doc.selectFirst("body")?.attr("data-addhash") ?: ""
-    val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
-
-    if (addhash.isBlank()) {
-        val result = BypassResult(cookie, "", "", dataTime)
-        cachedBypass = result
-        cachedBypassTime = System.currentTimeMillis()
-        BypassStorage.save(result)
-        return result
-    }
-
-    // Extract Qury and Vsite2 from page JavaScript
-    val qury = Regex("""Qury\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "ffr455"
-    val vsite = Regex("""Vsite2\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "userver"
-
-    // Simulate ad click
-    val mainDomain = MAIN_URL.substringAfter("://") // e.g. "net52.cc"
-    val adClickUrl = "https://$vsite.$mainDomain/?$qury=$addhash&a=y&t=${Math.random()}"
-    try {
-        app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
-    } catch (_: Exception) {}
-
-    // Wait for ad to "complete" — 20 seconds (server requires this minimum)
-    kotlinx.coroutines.delay(20000)
-
-    // Step 4: POST to verify2.php with addhash to confirm ad was watched
-    // Retry up to 8 times with 2-second delays
-    var usertoken = ""
-    var finalCookie = cookie
-    for (attempt in 1..8) {
-        kotlinx.coroutines.delay(2000)
-        try {
-            val verifyResp = app.post(
-                "$MAIN_URL/mobile/verify2.php",
-                data = mapOf("verify" to addhash),
-                headers = BROWSER_HEADERS,
-                referer = "$MAIN_URL/mobile/home?app=1"
-            )
-            // Extract updated cookie
-            val newCookie = verifyResp.cookies["t_hash_t"]
-            if (!newCookie.isNullOrBlank()) finalCookie = newCookie
-
-            val body = verifyResp.text
-            val json = tryParseJson<Map<String, String>>(body)
-            if (json != null) {
-                val status = json["statusup"] ?: ""
-                if (status.equals("All Done", ignoreCase = true)) {
-                    // Extract usertoken
-                    usertoken = json["usertoken"] ?: json["token"] ?: json["utoken"] ?: json["user_token"] ?: ""
-                    break
-                }
+            if (cookie.isEmpty()) {
+                cookie = homeResp.cookies["t_hash_t"] ?: ""
             }
         } catch (_: Exception) {}
     }
 
-    val result = BypassResult(finalCookie, addhash, usertoken, dataTime)
+    if (cookie.isEmpty()) return BypassResult("", "", USER_TOKEN, "")
+
+    val result = BypassResult(cookie, "", USER_TOKEN, "")
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
     BypassStorage.save(result)
@@ -191,10 +134,10 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Play
     val cookies = mutableMapOf(
         "t_hash_t" to bypass.cookie,
         "hd" to "on",
-        "ott" to ott
+        "ott" to ott,
+        "user_token" to USER_TOKEN
     )
     if (bypass.addhash.isNotEmpty()) cookies["addhash"] = bypass.addhash
-    if (bypass.usertoken.isNotEmpty()) cookies["usertoken"] = bypass.usertoken
 
     val baseUrl = MAIN_URL
     val response = try {
