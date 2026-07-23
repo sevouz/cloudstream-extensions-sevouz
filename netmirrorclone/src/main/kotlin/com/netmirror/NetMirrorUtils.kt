@@ -408,38 +408,41 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
     return token
 }
 
+/**
+ * A real NewTV link is signed: .../{id}.m3u8?in=<token>::<hash>::<expiry>::ni::t
+ * The rate-limit "penalty" stream is the bare .../{id}.m3u8 with no signature.
+ */
+private fun isSignedNewTvLink(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    return url.contains("?in=") || url.contains("&in=") || url.contains("::")
+}
+
+private suspend fun fetchPlayerLink(apiBase: String, id: String, ott: String, userToken: String): String? {
+    val headers = NEWTV_HEADERS.toMutableMap().apply {
+        put("Ott", ott)
+        put("Usertoken", userToken)
+    }
+    return try {
+        tryParseJson<PlayerResponse>(
+            app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
+        )?.video_link
+    } catch (_: Exception) { null }
+}
+
 suspend fun getNewTvLink(id: String, ott: String): String? {
     val apiBase = resolveNewTvApi()
     if (apiBase.isEmpty()) return null
 
-    // Step 1: get usertoken via OTP flow
+    // Step 1: usertoken via OTP flow (cached token first)
     var userToken = getNewTvUserToken(apiBase, ott, false)
+    var link = fetchPlayerLink(apiBase, id, ott, userToken)
 
-    // Step 2: call player.php with Usertoken header
-    var headers = NEWTV_HEADERS.toMutableMap().apply {
-        put("Ott", ott)
-        put("Usertoken", userToken)
-    }
-    var response = try {
-        tryParseJson<PlayerResponse>(
-            app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
-        )
-    } catch (_: Exception) { null }
-    var link = response?.video_link
-
-    // Step 3: if no link, force-refresh the token (fresh OTP via Cloudflare) and retry
-    if (link.isNullOrBlank()) {
+    // Step 2: if link is missing OR unsigned (= penalty stream), force a fresh
+    // unique OTP from netmirror.gg/tv and retry
+    if (!isSignedNewTvLink(link)) {
         userToken = getNewTvUserToken(apiBase, ott, true)
-        headers = NEWTV_HEADERS.toMutableMap().apply {
-            put("Ott", ott)
-            put("Usertoken", userToken)
-        }
-        response = try {
-            tryParseJson<PlayerResponse>(
-                app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
-            )
-        } catch (_: Exception) { null }
-        link = response?.video_link
+        val retry = fetchPlayerLink(apiBase, id, ott, userToken)
+        if (!retry.isNullOrBlank()) link = retry
     }
 
     return link
