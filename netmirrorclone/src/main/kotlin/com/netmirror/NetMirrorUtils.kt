@@ -10,7 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.UUID
 
-const val MAIN_URL = "https://net77.cc"
+const val MAIN_URL = "https://net52.cc"
 
 val BROWSER_HEADERS = mapOf(
     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -129,7 +129,7 @@ private suspend fun doBypass(): BypassResult {
     val vsite = Regex("""Vsite2\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "userver"
 
     // Simulate ad click
-    val adClickUrl = "https://$vsite.net77.cc/?$qury=$addhash&a=y&t=${Math.random()}"
+    val adClickUrl = "https://$vsite.net52.cc/?$qury=$addhash&a=y&t=${Math.random()}"
     try {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
     } catch (_: Exception) {}
