@@ -193,6 +193,14 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
+        // Force Cloudflare WebView verification on netmirror.gg
+        // This mimics what CNC Verse does — opens the CF captcha page
+        if (cfKiller.savedCookies["netmirror.gg"] == null) {
+            try {
+                app.get("https://netmirror.gg", interceptor = cfKiller)
+            } catch (_: Exception) {}
+        }
+
         // Try NewTV API — single request, ad-free
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
