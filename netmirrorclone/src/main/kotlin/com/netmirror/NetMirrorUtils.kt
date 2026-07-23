@@ -338,6 +338,8 @@ suspend fun fetchNetmirrorTvHtml(): String {
  * Gets a NewTV usertoken by calling /newtv/otp.php with the OTP header.
  * Uses the default OTP first; if invalid, fetches a fresh OTP from netmirror.gg/tv.
  */
+@Volatile var newTvDebug: String = ""
+
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean): String {
     // Return cached token (valid 12h) — only when NOT force refreshing
     if (!forceRefresh) {
@@ -361,6 +363,8 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
             app.get("$apiBase/newtv/otp.php", headers = otpHeaders(currentOtp)).text
         )
     } catch (_: Exception) { null }
+
+    newTvDebug = "o=$currentOtp st=${otpResponse?.status} tk=${otpResponse?.usertoken?.take(5)} er=${otpResponse?.error_msg?.take(12)} pm=${otpResponse?.pub_msg?.take(12)}"
 
     // Fetch a fresh OTP from netmirror.gg/tv when:
     //  - the OTP is invalid, OR
@@ -387,7 +391,12 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
                         app.get("$apiBase/newtv/otp.php", headers = otpHeaders(currentOtp)).text
                     )
                 } catch (_: Exception) { null }
+                newTvDebug = "FRESH o=$currentOtp st=${otpResponse?.status} tk=${otpResponse?.usertoken?.take(5)} pm=${otpResponse?.pub_msg?.take(12)}"
+            } else {
+                newTvDebug += " |noOtpOnPage"
             }
+        } else {
+            newTvDebug += " |noConstOtp"
         }
     }
 

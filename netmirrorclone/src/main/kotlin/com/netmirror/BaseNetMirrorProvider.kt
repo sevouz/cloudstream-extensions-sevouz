@@ -194,15 +194,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         // Primary: NewTV API (ad-free, OTP-authenticated)
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
-            // DEBUG: show the video host/path in the source name so it can be read on-screen
-            val debugHint = try {
-                val noScheme = newTvM3u8.substringAfter("://")
-                val host = noScheme.substringBefore("/")
-                val firstPath = noScheme.substringAfter("/", "").substringBefore("?").take(40)
-                "$host/$firstPath"
-            } catch (_: Exception) { "" }
             callback.invoke(
-                newExtractorLink(name, "$name NewTV [$debugHint]", newTvM3u8, type = ExtractorLinkType.M3U8) {
+                newExtractorLink(name, "$name NewTV [$newTvDebug]", newTvM3u8, type = ExtractorLinkType.M3U8) {
                     this.referer = MAIN_URL
                 }
             )
