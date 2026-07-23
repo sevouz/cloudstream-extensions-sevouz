@@ -2,6 +2,7 @@ package com.netmirror
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -192,10 +193,15 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Step 1: Solve Cloudflare challenge on netmirror.gg (opens WebView if needed)
-        // This gives us cf_clearance cookie that authenticates subsequent requests
+        // Step 1: Solve Cloudflare challenge on netmirror.gg via WebView
+        // This opens the verification page the user must solve (like CNC Verse)
         try {
-            app.get(CF_VERIFY_URL, interceptor = cfKiller)
+            val cfResolver = WebViewResolver(
+                interceptUrl = Regex("""netmirror\.gg"""),
+                useOkhttp = false,
+                timeout = 60_000L
+            )
+            app.get(CF_VERIFY_URL, interceptor = cfResolver)
         } catch (_: Exception) {}
 
         // Step 2: Try NewTV API — single request, ad-free
