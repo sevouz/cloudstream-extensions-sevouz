@@ -48,20 +48,12 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Trigger Cloudflare verification on netmirror.gg (opens WebView if needed)
-        if (cachedBypass == null) {
-            try {
-                app.get(CF_VERIFY_URL, interceptor = cfKiller)
-            } catch (_: Exception) {}
-        }
-
         // Try with quick (non-blocking) cookies first
         var doc = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = quickCookies(),
             headers = BROWSER_HEADERS,
-            referer = "$mainUrl/mobile/home?app=1",
-            interceptor = cfKiller
+            referer = "$mainUrl/mobile/home?app=1"
         ).document
         var items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
@@ -200,7 +192,13 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Try NewTV API FIRST — no bypass needed, single request, ad-free
+        // Step 1: Solve Cloudflare challenge on netmirror.gg (opens WebView if needed)
+        // This gives us cf_clearance cookie that authenticates subsequent requests
+        try {
+            app.get(CF_VERIFY_URL, interceptor = cfKiller)
+        } catch (_: Exception) {}
+
+        // Step 2: Try NewTV API — single request, ad-free
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
             callback.invoke(
@@ -211,7 +209,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             hasLink = true
         }
 
-        // Only try playlist API if NewTV failed — this requires bypass (more requests)
+        // Step 3: Only try playlist API if NewTV failed
         if (!hasLink) {
             val result = try {
                 getPlaylistLink(ld.id, ott, playlistPath)
