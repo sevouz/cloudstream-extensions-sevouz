@@ -10,8 +10,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.UUID
 
-// Primary domain for API calls — behind Cloudflare, triggers verification
-@Volatile var MAIN_URL = "https://netmirror.gg"
+// Primary domain for API calls
+@Volatile var MAIN_URL = "https://net52.cc"
     private set
 
 // Cloudflare-protected entry point (used for cf_clearance cookie)

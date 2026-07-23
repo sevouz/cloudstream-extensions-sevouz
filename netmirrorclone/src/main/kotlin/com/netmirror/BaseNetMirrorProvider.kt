@@ -53,8 +53,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             "$MAIN_URL/mobile/home?app=1",
             cookies = quickCookies(),
             headers = BROWSER_HEADERS,
-            referer = "$MAIN_URL/mobile/home?app=1",
-            interceptor = cfKiller
+            referer = "$MAIN_URL/mobile/home?app=1"
         ).document
         var items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
