@@ -283,28 +283,154 @@ suspend fun resolveNewTvApi(): String {
     return ""
 }
 
+// Default shared OTP used by the NewTV API (from CNC Verse)
+private const val DEFAULT_OTP = "109400"
+
+@Volatile private var savedOtp: String = ""
+// usertoken cache per ott: ott -> (token, timestamp)
+private val savedUserTokens = mutableMapOf<String, Pair<String, Long>>()
+
+private fun otpHeaders(otp: String) = mapOf(
+    "accept" to "application/json, text/plain, */*",
+    "cache-control" to "no-cache, no-store, must-revalidate",
+    "Connection" to "Keep-Alive",
+    "expires" to "0",
+    "otp" to otp,
+    "pragma" to "no-cache",
+    "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0"
+)
+
+/** Fetch netmirror.gg/tv HTML; solves Cloudflare via WebView if challenged. */
+suspend fun fetchNetmirrorTvHtml(): String {
+    val headers = mutableMapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9"
+    )
+    if (cachedCfClearance.isNotEmpty()) headers["Cookie"] = "cf_clearance=$cachedCfClearance"
+
+    val resp = try { app.get(NETMIRROR_TV_URL, headers = headers) } catch (_: Exception) { null }
+    val html = resp?.text ?: ""
+    val code = resp?.code ?: 0
+
+    val isCloudflare = code == 403 || code == 503 ||
+        (html.contains("netmirror.gg/tv", true) && (
+            html.contains("Just a moment", true) ||
+            html.contains("cf-browser-verification", true) ||
+            html.contains("Checking if the site connection is secure", true) ||
+            html.contains("cloudflare", true)
+        ))
+
+    if (isCloudflare) {
+        val cf = solveCloudflareInWebView(NETMIRROR_TV_URL) ?: return html
+        cachedCfClearance = cf
+        val headers2 = headers.toMutableMap().apply { put("Cookie", "cf_clearance=$cf") }
+        return try { app.get(NETMIRROR_TV_URL, headers = headers2).text } catch (_: Exception) { html }
+    }
+    return html
+}
+
+/**
+ * Gets a NewTV usertoken by calling /newtv/otp.php with the OTP header.
+ * Uses the default OTP first; if invalid, fetches a fresh OTP from netmirror.gg/tv.
+ */
+suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean): String {
+    // Return cached token (valid 12h)
+    if (!forceRefresh) {
+        val cached = savedUserTokens[ott]
+        if (cached != null && cached.first.isNotEmpty() &&
+            System.currentTimeMillis() - cached.second < 43_200_000
+        ) {
+            return cached.first
+        }
+    }
+
+    var currentOtp = if (savedOtp.isNotEmpty()) savedOtp else DEFAULT_OTP
+
+    var otpResponse = try {
+        tryParseJson<NewTvOtpResponse>(
+            app.get("$apiBase/newtv/otp.php", headers = otpHeaders(currentOtp)).text
+        )
+    } catch (_: Exception) { null }
+
+    // If OTP invalid, fetch a fresh one from netmirror.gg/tv (solves Cloudflare)
+    if (otpResponse?.status == "error" &&
+        otpResponse.error_msg == "Invalid OTP, Please Enter Valid OTP"
+    ) {
+        val tvHtml = fetchNetmirrorTvHtml()
+        val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
+        if (match != null) {
+            val newOtp = match.groupValues[1]
+                .replace(Regex("""\s*,\s*"""), "")
+                .replace(" ", "")
+                .replace("\"", "")
+                .replace("'", "")
+            if (newOtp.isNotEmpty()) {
+                currentOtp = newOtp
+                savedOtp = newOtp
+                otpResponse = try {
+                    tryParseJson<NewTvOtpResponse>(
+                        app.get("$apiBase/newtv/otp.php", headers = otpHeaders(currentOtp)).text
+                    )
+                } catch (_: Exception) { null }
+            }
+        }
+    }
+
+    val token = otpResponse?.usertoken ?: ""
+    if (token.isNotEmpty()) {
+        savedUserTokens[ott] = token to System.currentTimeMillis()
+    }
+    return token
+}
+
 suspend fun getNewTvLink(id: String, ott: String): String? {
     val apiBase = resolveNewTvApi()
     if (apiBase.isEmpty()) return null
 
-    // Get cf_clearance + OTP from the netmirror.gg/tv verification (solves Cloudflare via WebView)
-    val cfOtp = try { ensureCfAndOtp() } catch (_: Exception) { null }
-    val cfClearance = cfOtp?.first ?: cachedCfClearance
-    val otp = cfOtp?.second ?: cachedOtp
+    // Step 1: get usertoken via OTP flow
+    var userToken = getNewTvUserToken(apiBase, ott, false)
 
-    val headers = NEWTV_HEADERS.toMutableMap().apply {
+    // Step 2: call player.php with Usertoken header
+    var headers = NEWTV_HEADERS.toMutableMap().apply {
         put("Ott", ott)
-        put("Usertoken", otp)
-        if (cfClearance.isNotEmpty()) {
-            put("Cookie", "cf_clearance=$cfClearance")
-        }
+        put("Usertoken", userToken)
     }
-    val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
-    val response = tryParseJson<PlayerResponse>(text)
-    return response?.video_link
+    var response = try {
+        tryParseJson<PlayerResponse>(
+            app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
+        )
+    } catch (_: Exception) { null }
+    var link = response?.video_link
+
+    // Step 3: if no link, force-refresh the token (fresh OTP via Cloudflare) and retry
+    if (link.isNullOrBlank()) {
+        userToken = getNewTvUserToken(apiBase, ott, true)
+        headers = NEWTV_HEADERS.toMutableMap().apply {
+            put("Ott", ott)
+            put("Usertoken", userToken)
+        }
+        response = try {
+            tryParseJson<PlayerResponse>(
+                app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
+            )
+        } catch (_: Exception) { null }
+        link = response?.video_link
+    }
+
+    return link
 }
 
 data class TokenResponse(val token_hash: String? = null)
+data class NewTvOtpResponse(
+    val otp: String? = null,
+    val status: String? = null,
+    val usertoken: String? = null,
+    val pub_msg: String? = null,
+    val pub_msg_f_size: Int? = null,
+    val pub_msg_color: String? = null,
+    val error_msg: String? = null
+)
 data class PlayerResponse(val status: String? = null, val video_link: String? = null, val referer: String? = null)
 data class PlayListItem(val sources: List<Source>? = null, val tracks: List<Tracks>? = null, val title: String? = null, val image: String? = null)
 data class Source(val file: String? = null, val label: String? = null, val type: String? = null)

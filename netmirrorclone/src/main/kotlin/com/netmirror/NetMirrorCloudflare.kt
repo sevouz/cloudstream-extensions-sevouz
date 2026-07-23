@@ -1,175 +1,248 @@
 package com.netmirror
 
 import android.annotation.SuppressLint
+import android.app.AlertDialog
+import android.app.Dialog
 import android.graphics.Color
-import android.view.Gravity
-import android.view.ViewGroup
+import android.graphics.Point
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewTreeObserver
+import android.view.WindowManager
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
-import com.lagradost.api.Log
 import com.lagradost.cloudstream3.CommonActivity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 const val NETMIRROR_TV_URL = "https://netmirror.gg/tv"
 
-data class CfResult(val html: String, val cfClearance: String)
-
-// Cache the cf_clearance + otp for reuse
+// Cached cf_clearance cookie
 @Volatile var cachedCfClearance: String = ""
-@Volatile var cachedOtp: String = ""
-@Volatile var cachedCfTime: Long = 0L
 
-fun getCfClearanceFromManager(url: String): String {
+fun cfClearanceFrom(url: String): String {
     return try {
-        val cookie = CookieManager.getInstance().getCookie(url) ?: return ""
-        Regex("""cf_clearance=([^;]+)""").find(cookie)?.groupValues?.get(1) ?: ""
+        val cookies = CookieManager.getInstance().getCookie(url) ?: ""
+        Regex("""cf_clearance=([^;]+)""").find(cookies)?.groupValues?.get(1) ?: ""
     } catch (_: Exception) {
         ""
     }
 }
 
 /**
- * Opens an interactive WebView so the user can solve the Cloudflare challenge on netmirror.gg/tv.
- * Captures the cf_clearance cookie and the resulting page HTML (which contains the OTP).
+ * Opens an interactive WebView (in an AlertDialog) so the user can solve the Cloudflare
+ * challenge on netmirror.gg/tv. Returns the cf_clearance cookie once solved.
+ * On TV, shows a movable cursor controlled by the D-pad.
  */
 @SuppressLint("SetJavaScriptEnabled")
-suspend fun solveCloudflareInWebView(timeoutMs: Long = 120_000L): CfResult? {
+suspend fun solveCloudflareInWebView(url: String = NETMIRROR_TV_URL): String? {
     val activity = CommonActivity.activity ?: return null
 
-    return withTimeoutOrNull(timeoutMs) {
+    return withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { cont ->
-            activity.runOnUiThread {
-                var webView: WebView? = null
-                var overlay: FrameLayout? = null
-                var resumed = false
+            var resolved = false
 
-                fun finish(result: CfResult?) {
-                    if (resumed) return
-                    resumed = true
-                    try {
-                        webView?.stopLoading()
-                        overlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
-                        webView?.destroy()
-                    } catch (_: Exception) {}
-                    if (cont.isActive) cont.resume(result)
+            fun finish(cf: String?) {
+                if (resolved) return
+                resolved = true
+                if (cont.isActive) cont.resume(cf)
+            }
+
+            try {
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+
+                val wv = WebView(activity)
+                cookieManager.setAcceptThirdPartyCookies(wv, true)
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled = true
+                @Suppress("DEPRECATION")
+                wv.settings.mixedContentMode = 0
+                wv.settings.userAgentString =
+                    "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                wv.settings.mediaPlaybackRequiresUserGesture = false
+                wv.webChromeClient = WebChromeClient()
+
+                fun extractAndFinish(dialog: Dialog?) {
+                    if (resolved) return
+                    val cf = cfClearanceFrom(url)
+                    if (cf.isNotEmpty()) {
+                        cachedCfClearance = cf
+                        try { wv.destroy() } catch (_: Exception) {}
+                        try { dialog?.dismiss() } catch (_: Exception) {}
+                        finish(cf)
+                    }
                 }
 
-                try {
-                    val root = activity.window.decorView as? ViewGroup
+                val dp = activity.resources.displayMetrics.density
+                val wm = activity.getSystemService(android.content.Context.WINDOW_SERVICE) as WindowManager
+                val metrics = Point()
+                @Suppress("DEPRECATION")
+                wm.defaultDisplay.getSize(metrics)
 
-                    overlay = FrameLayout(activity).apply {
-                        setBackgroundColor(Color.BLACK)
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
+                val wrapper = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    minimumWidth = (metrics.x * 0.95f).toInt()
+                    minimumHeight = (metrics.y * 0.9f).toInt()
+                }
+
+                val info = TextView(activity).apply {
+                    text = "🔐 Solve the Cloudflare captcha — use D-pad to move cursor, OK to click."
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#1A1A2E"))
+                    textSize = 13f
+                    val p = (10 * dp).toInt()
+                    setPadding(p, p, p, p)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+
+                // TV cursor
+                val isTv = try {
+                    com.lagradost.cloudstream3.ui.settings.Globals.isLayout(2)
+                } catch (_: Throwable) { false }
+
+                val cursorSize = (22 * dp).toInt()
+                val cursorView: View? = if (isTv) {
+                    View(activity).apply {
+                        layoutParams = FrameLayout.LayoutParams(cursorSize, cursorSize)
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(Color.argb(160, 255, 50, 50))
+                            setStroke((2 * dp).toInt(), Color.WHITE)
+                        }
+                        elevation = 999f
                     }
+                } else null
 
-                    val infoBar = TextView(activity).apply {
-                        text = "🔐 Solve the Cloudflare captcha to verify you are human"
-                        setTextColor(Color.WHITE)
-                        setBackgroundColor(Color.parseColor("#222244"))
-                        setPadding(24, 24, 24, 24)
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                        ).apply { gravity = Gravity.TOP }
-                    }
+                val container = FrameLayout(activity).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.MATCH_PARENT
+                    ).apply { weight = 1f }
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                }
+                wv.layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                container.addView(wv)
 
-                    webView = WebView(activity).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        ).apply { topMargin = 120 }
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.userAgentString =
-                            "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                var cursorX = (metrics.x * 0.95f) / 2f
+                var cursorY = (metrics.y * 0.9f) / 2f
 
-                        CookieManager.getInstance().setAcceptCookie(true)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                super.onPageFinished(view, url)
-                                val clearance = getCfClearanceFromManager(NETMIRROR_TV_URL)
-                                if (clearance.isNotEmpty()) {
-                                    // Challenge passed — extract page HTML
-                                    view?.evaluateJavascript(
-                                        "(function(){return document.documentElement.outerHTML;})();"
-                                    ) { rawHtml ->
-                                        val html = rawHtml
-                                            ?.replace("\\u003C", "<")
-                                            ?.replace("\\\"", "\"")
-                                            ?.replace("\\n", "\n")
-                                            ?.replace("\\/", "/")
-                                            ?: ""
-                                        // Only finish if the page is no longer a CF challenge
-                                        if (!html.contains("Just a moment", true) &&
-                                            !html.contains("Checking your browser", true) &&
-                                            html.length > 500
-                                        ) {
-                                            finish(CfResult(html, clearance))
-                                        }
-                                    }
-                                }
+                if (cursorView != null) {
+                    container.addView(cursorView)
+                    container.viewTreeObserver.addOnGlobalLayoutListener(object :
+                        ViewTreeObserver.OnGlobalLayoutListener {
+                        override fun onGlobalLayout() {
+                            container.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                            cursorX = container.width / 2f
+                            cursorY = container.height / 2f
+                            cursorView.translationX = cursorX - cursorSize / 2f
+                            cursorView.translationY = cursorY - cursorSize / 2f
+                        }
+                    })
+                    container.setOnKeyListener { _, keyCode, event ->
+                        if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        val step = dp * 10f
+                        fun move(dx: Float, dy: Float) {
+                            cursorX = (cursorX + dx).coerceIn(0f, container.width.toFloat())
+                            cursorY = (cursorY + dy).coerceIn(0f, container.height.toFloat())
+                            cursorView.translationX = cursorX - cursorSize / 2f
+                            cursorView.translationY = cursorY - cursorSize / 2f
+                        }
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> { move(0f, -step); true }
+                            KeyEvent.KEYCODE_DPAD_DOWN -> { move(0f, step); true }
+                            KeyEvent.KEYCODE_DPAD_LEFT -> { move(-step, 0f); true }
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> { move(step, 0f); true }
+                            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                                val t = SystemClock.uptimeMillis()
+                                val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, cursorX, cursorY, 0)
+                                val up = MotionEvent.obtain(t, t + 120, MotionEvent.ACTION_UP, cursorX, cursorY, 0)
+                                wv.dispatchTouchEvent(down)
+                                wv.dispatchTouchEvent(up)
+                                down.recycle(); up.recycle()
+                                true
                             }
+                            else -> false
                         }
                     }
-
-                    overlay!!.addView(webView)
-                    overlay!!.addView(infoBar)
-                    root?.addView(overlay)
-
-                    webView!!.loadUrl(NETMIRROR_TV_URL)
-                } catch (e: Exception) {
-                    Log.e("NetMirrorCF", "WebView error: ${e.message}")
-                    finish(null)
                 }
 
-                cont.invokeOnCancellation { finish(null) }
+                wrapper.addView(info)
+                wrapper.addView(container)
+
+                val dialog = AlertDialog.Builder(activity)
+                    .setView(wrapper)
+                    .setCancelable(false)
+                    .create()
+                dialog.window?.apply {
+                    setBackgroundDrawable(ColorDrawable(0))
+                    setLayout((metrics.x * 0.95f).toInt(), (metrics.y * 0.9f).toInt())
+                }
+
+                wv.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, pageUrl: String?) {
+                        super.onPageFinished(view, pageUrl)
+                        extractAndFinish(dialog)
+                        if (!resolved) {
+                            val handler = Handler(Looper.getMainLooper())
+                            handler.postDelayed(object : Runnable {
+                                override fun run() {
+                                    if (!resolved) {
+                                        extractAndFinish(dialog)
+                                        if (!resolved) handler.postDelayed(this, 1000L)
+                                    }
+                                }
+                            }, 1000L)
+                        }
+                    }
+                }
+
+                dialog.setOnDismissListener {
+                    if (!resolved) {
+                        try { wv.destroy() } catch (_: Exception) {}
+                        finish(null)
+                    }
+                }
+
+                // 120s timeout
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!resolved) {
+                        try { wv.destroy() } catch (_: Exception) {}
+                        try { dialog.dismiss() } catch (_: Exception) {}
+                        finish(null)
+                    }
+                }, 120_000L)
+
+                dialog.show()
+                wv.loadUrl(url)
+
+                cont.invokeOnCancellation {
+                    try { wv.destroy() } catch (_: Exception) {}
+                    try { dialog.dismiss() } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                finish(null)
             }
         }
     }
-}
-
-/** Extract the OTP token from the netmirror.gg/tv page HTML */
-fun extractOtp(html: String): String {
-    // const otp = [ ... ]  or  const otp = "..."
-    Regex("""const\s+otp\s*=\s*\[([^\]]*)]""").find(html)?.let { m ->
-        val inner = m.groupValues[1]
-        val digits = Regex("""\d+""").findAll(inner).map { it.value }.joinToString("")
-        if (digits.isNotEmpty()) return digits
-    }
-    Regex("""const\s+otp\s*=\s*["']([^"']+)["']""").find(html)?.let { m ->
-        return m.groupValues[1]
-    }
-    Regex("""["']?otp["']?\s*[:=]\s*["']?(\d{4,})["']?""").find(html)?.let { m ->
-        return m.groupValues[1]
-    }
-    return ""
-}
-
-/**
- * Ensures we have a valid cf_clearance + OTP. Solves Cloudflare via WebView if needed.
- * Cached for 12 hours.
- */
-suspend fun ensureCfAndOtp(): Pair<String, String>? {
-    val now = System.currentTimeMillis()
-    if (cachedCfClearance.isNotEmpty() && cachedOtp.isNotEmpty() && now - cachedCfTime < 43_200_000) {
-        return cachedCfClearance to cachedOtp
-    }
-
-    val result = solveCloudflareInWebView() ?: return null
-    val otp = extractOtp(result.html)
-    cachedCfClearance = result.cfClearance
-    cachedOtp = otp
-    cachedCfTime = System.currentTimeMillis()
-    return result.cfClearance to otp
 }
