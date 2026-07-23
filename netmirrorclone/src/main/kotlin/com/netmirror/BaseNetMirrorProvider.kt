@@ -192,11 +192,16 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
-        // Force Cloudflare WebView verification on netmirror.gg
-        // This mimics what CNC Verse does — opens the CF captcha page
-        if (cfKiller.savedCookies["netmirror.gg"] == null) {
+        // Force Cloudflare verification via WebView on the verify page
+        // After solving, the server marks our IP as verified for 24h
+        if (cfKiller.savedCookies["net77.cc"] == null) {
             try {
-                app.get("https://netmirror.gg", interceptor = cfKiller)
+                val verifyResolver = WebViewResolver(
+                    interceptUrl = Regex("""net77\.cc/mobile|net77\.cc/home|net77\.cc/$"""),
+                    useOkhttp = false,
+                    timeout = 60_000L
+                )
+                app.get("$MAIN_URL/verify2", interceptor = verifyResolver, headers = BROWSER_HEADERS)
             } catch (_: Exception) {}
         }
 
