@@ -339,7 +339,7 @@ suspend fun fetchNetmirrorTvHtml(): String {
  * Uses the default OTP first; if invalid, fetches a fresh OTP from netmirror.gg/tv.
  */
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean): String {
-    // Return cached token (valid 12h)
+    // Return cached token (valid 12h) — only when NOT force refreshing
     if (!forceRefresh) {
         val cached = NewTvStore.tokens[ott]
         if (cached != null && cached.first.isNotEmpty() &&
@@ -347,6 +347,11 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
         ) {
             return cached.first
         }
+    }
+
+    // On force refresh, discard the cached OTP so we fetch a genuinely fresh one
+    if (forceRefresh) {
+        NewTvStore.otp = ""
     }
 
     var currentOtp = if (NewTvStore.otp.isNotEmpty()) NewTvStore.otp else DEFAULT_OTP
@@ -357,10 +362,14 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
         )
     } catch (_: Exception) { null }
 
-    // If OTP invalid, fetch a fresh one from netmirror.gg/tv (solves Cloudflare)
-    if (otpResponse?.status == "error" &&
-        otpResponse.error_msg == "Invalid OTP, Please Enter Valid OTP"
-    ) {
+    // Fetch a fresh OTP from netmirror.gg/tv when:
+    //  - the OTP is invalid, OR
+    //  - we're force-refreshing (previous token produced a penalty/blank stream)
+    val needFresh = forceRefresh ||
+        (otpResponse?.status == "error" &&
+            otpResponse.error_msg == "Invalid OTP, Please Enter Valid OTP")
+
+    if (needFresh) {
         val tvHtml = fetchNetmirrorTvHtml()
         val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
         if (match != null) {
@@ -369,7 +378,7 @@ suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolea
                 .replace(" ", "")
                 .replace("\"", "")
                 .replace("'", "")
-            if (newOtp.isNotEmpty()) {
+            if (newOtp.isNotEmpty() && newOtp != currentOtp) {
                 currentOtp = newOtp
                 NewTvStore.otp = newOtp
                 BypassStorage.saveOtp(newOtp)
