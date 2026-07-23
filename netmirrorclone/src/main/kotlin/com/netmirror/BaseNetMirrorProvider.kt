@@ -1,12 +1,13 @@
 package com.netmirror
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.network.WebViewResolver
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import okhttp3.Interceptor
+import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
@@ -26,19 +27,21 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
-        val c = mutableMapOf("ott" to ott, "hd" to "on", "user_token" to "233123f803cf02184bf6c67e149cdd50")
+        val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
         if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
+        if (bypass.usertoken.isNotEmpty()) c["usertoken"] = bypass.usertoken
         return c
     }
 
     /** Quick cookies using cached bypass if available, without blocking */
     private fun quickCookies(): Map<String, String> {
         val bypass = cachedBypass
-        val c = mutableMapOf("ott" to ott, "hd" to "on", "user_token" to "233123f803cf02184bf6c67e149cdd50")
+        val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass != null && bypass.cookie.isNotEmpty()) {
             c["t_hash_t"] = bypass.cookie
             if (bypass.addhash.isNotEmpty()) c["addhash"] = bypass.addhash
+            if (bypass.usertoken.isNotEmpty()) c["usertoken"] = bypass.usertoken
         }
         return c
     }
@@ -46,10 +49,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         // Try with quick (non-blocking) cookies first
         var doc = app.get(
-            "$MAIN_URL/mobile/home?app=1",
+            "$mainUrl/mobile/home?app=1",
             cookies = quickCookies(),
             headers = BROWSER_HEADERS,
-            referer = "$MAIN_URL/mobile/home?app=1"
+            referer = "$mainUrl/mobile/home?app=1"
         ).document
         var items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
@@ -60,10 +63,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         // If quick cookies didn't work (empty results), fallback to full bypass
         if (items.isEmpty()) {
             doc = app.get(
-                "$MAIN_URL/mobile/home?app=1",
+                "$mainUrl/mobile/home?app=1",
                 cookies = cookies(),
                 headers = BROWSER_HEADERS,
-                referer = "$MAIN_URL/mobile/home?app=1"
+                referer = "$mainUrl/mobile/home?app=1"
             ).document
             items = doc.select(".tray-container, #top10").mapNotNull { section ->
                 val name = section.select("h2, span").text()
@@ -80,21 +83,21 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         if (id.isBlank()) return null
         return newAnimeSearchResponse("", Id(id).toJson()) {
             posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val text = app.get(
-            "$MAIN_URL/mobile/$searchPath?s=$query&t=$unixTime",
-            referer = "$MAIN_URL/home",
+            "$mainUrl/mobile/$searchPath?s=$query&t=$unixTime",
+            referer = "$mainUrl/home",
             cookies = cookies()
         ).text
         val data = tryParseJson<SearchData>(text) ?: return emptyList()
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
                 posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
     }
@@ -102,9 +105,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val id = parseJson<Id>(url).id
         val text = app.get(
-            "$MAIN_URL/mobile/$postPath?id=$id&t=$unixTime",
+            "$mainUrl/mobile/$postPath?id=$id&t=$unixTime",
             headers = BROWSER_HEADERS,
-            referer = "$MAIN_URL/home",
+            referer = "$mainUrl/home",
             cookies = cookies()
         ).text
         val data = tryParseJson<PostData>(text) ?: return null
@@ -116,7 +119,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
                 posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
 
@@ -144,7 +147,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
             backgroundPosterUrl = "https://imgcdn.kim/$imgPrefix/h/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$MAIN_URL/home")
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc
             year = data.year.toIntOrNull()
             tags = genre
@@ -158,9 +161,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         var pg = page
         while (true) {
             val text = app.get(
-                "$MAIN_URL/mobile/$episodesPath?s=$sid&series=$eid&t=$unixTime&page=$pg",
+                "$mainUrl/mobile/$episodesPath?s=$sid&series=$eid&t=$unixTime&page=$pg",
                 headers = BROWSER_HEADERS,
-                referer = "$MAIN_URL/home",
+                referer = "$mainUrl/home",
                 cookies = cookies()
             ).text
             val data = tryParseJson<EpisodesData>(text) ?: break
@@ -186,21 +189,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val ld = parseJson<LoadData>(data)
-        var hasLink = false
 
-        // Trigger Cloudflare verification on net77.cc/verify2
-        // WebView renders the CF challenge page, user solves it, server marks IP as verified
-        try {
-            val verifyResolver = WebViewResolver(
-                interceptUrl = Regex("""net77\.cc/mobile|net77\.cc/home|net77\.cc/$|net77\.cc/tv"""),
-                additionalUrls = listOf(Regex("""net77\.cc""")),
-                useOkhttp = false,
-                timeout = 60_000L
-            )
-            app.get(url = "$MAIN_URL/verify2", interceptor = verifyResolver)
-        } catch (_: Exception) {}
-
-        // Try NewTV API — single request, ad-free
+        // Try NewTV API first (ad-free streams)
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
             callback.invoke(
@@ -208,40 +198,39 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     this.referer = MAIN_URL
                 }
             )
-            hasLink = true
         }
 
-        // Step 3: Only try playlist API if NewTV failed
-        if (!hasLink) {
-            val result = try {
-                getPlaylistLink(ld.id, ott, playlistPath)
-            } catch (_: Exception) { null }
+        // Also try playlist API (may have subtitles)
+        val result = try {
+            getPlaylistLink(ld.id, ott, playlistPath)
+        } catch (_: Exception) { null }
 
-            if (result != null) {
-                result.tracks?.forEach { track ->
-                    val url = track.file ?: return@forEach
-                    val label = track.label ?: "Unknown"
-                    val kind = track.kind ?: ""
-                    if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
-                        subtitleCallback.invoke(SubtitleFile(label, url))
+        if (result != null) {
+            val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
+            if (source != null) {
+                val url = source.file!!
+                val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
+                callback.invoke(
+                    newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
+                        this.referer = MAIN_URL
                     }
-                }
+                )
+            }
 
-                val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
-                if (source != null) {
-                    val url = source.file!!
-                    val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
-                    callback.invoke(
-                        newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
-                            this.referer = MAIN_URL
-                        }
+            // Add subtitles
+            result.tracks?.forEach { track ->
+                val url = track.file ?: return@forEach
+                val label = track.label ?: "Unknown"
+                val kind = track.kind ?: ""
+                if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
+                    subtitleCallback.invoke(
+                        SubtitleFile(label, url)
                     )
-                    hasLink = true
                 }
             }
         }
 
-        return hasLink
+        return !newTvM3u8.isNullOrBlank() || result != null
     }
 
     private fun getQualityFromLabel(label: String): Int {
@@ -255,18 +244,23 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         }
     }
 
+    private val cloudflareKiller by lazy { CloudflareKiller() }
+
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
         return Interceptor { chain ->
             val req = chain.request()
-            val cookieParts = mutableListOf("hd=on", "ott=$ott", "user_token=233123f803cf02184bf6c67e149cdd50")
             val bypass = cachedBypass
             if (bypass != null && bypass.cookie.isNotEmpty()) {
-                cookieParts.add(0, "t_hash_t=${bypass.cookie}")
+                val cookieParts = mutableListOf("t_hash_t=${bypass.cookie}", "hd=on", "ott=$ott")
+                if (bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
+                if (bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
+                val newReq = req.newBuilder()
+                    .header("Cookie", cookieParts.joinToString("; "))
+                    .build()
+                chain.proceed(newReq)
+            } else {
+                chain.proceed(req)
             }
-            val newReq = req.newBuilder()
-                .header("Cookie", cookieParts.joinToString("; "))
-                .build()
-            chain.proceed(newReq)
         }
     }
 

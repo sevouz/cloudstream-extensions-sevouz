@@ -10,12 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.UUID
 
-// Primary domain for API calls
-@Volatile var MAIN_URL = "https://net77.cc"
-    private set
-
-// Cloudflare-protected entry point (used for cf_clearance cookie)
-const val CF_VERIFY_URL = "https://netmirror.gg"
+const val MAIN_URL = "https://net77.cc"
 
 val BROWSER_HEADERS = mapOf(
     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -57,73 +52,122 @@ suspend fun ensureBypass(): BypassResult {
     }
 }
 
-/** Invalidate cached bypass — call when requests start failing */
-fun invalidateCache() {
-    cachedBypass = null
-    cachedBypassTime = 0L
-    resolvedApiUrl = ""
-}
-
-// Hardcoded user token — this tells the server "ad was watched"
-private const val USER_TOKEN = "233123f803cf02184bf6c67e149cdd50"
-
 private suspend fun doBypass(): BypassResult {
-    // Simple bypass: POST to verify.php to get t_hash_t cookie
-    var cookie = ""
-    try {
-        val client = OkHttpClient.Builder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-        val formBody = FormBody.Builder()
-            .add("g-recaptcha-response", UUID.randomUUID().toString())
-            .build()
-        val request = Request.Builder()
-            .url("$MAIN_URL/verify.php")
-            .post(formBody)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-            .header("Referer", "$MAIN_URL/verify2")
-            .header("Origin", MAIN_URL)
-            .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
-            .header("sec-ch-ua-mobile", "?0")
-            .header("sec-ch-ua-platform", "\"Windows\"")
-            .header("Sec-Fetch-Dest", "document")
-            .header("Sec-Fetch-Mode", "navigate")
-            .header("Sec-Fetch-Site", "same-origin")
-            .header("Sec-Fetch-User", "?1")
-            .header("Upgrade-Insecure-Requests", "1")
-            .build()
-        val response = client.newCall(request).execute()
-        response.headers("Set-Cookie").forEach { h ->
-            if (h.contains("t_hash_t=")) {
-                cookie = h.substringAfter("t_hash_t=").substringBefore(";")
-            }
-        }
-        response.close()
-    } catch (_: Exception) {}
 
-    // Fallback: try GET homepage for cookie
+    // Step 1: GET homepage to get cookie and check for ad wall
+    val homeResp = app.get(
+        "$MAIN_URL/mobile/home?app=1",
+        headers = BROWSER_HEADERS,
+        referer = "$MAIN_URL/mobile/home?app=1"
+    )
+    var cookie = ""
+    homeResp.okhttpResponse.headers("Set-Cookie").forEach { h ->
+        if (h.contains("t_hash_t=")) {
+            cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+        }
+    }
+    if (cookie.isEmpty()) {
+        cookie = homeResp.cookies["t_hash_t"] ?: ""
+    }
+
+    // Also try verify.php if homepage didn't give cookie
     if (cookie.isEmpty()) {
         try {
-            val homeResp = app.get(
-                "$MAIN_URL/mobile/home?app=1",
-                headers = BROWSER_HEADERS,
-                referer = "$MAIN_URL/mobile/home?app=1"
-            )
-            homeResp.okhttpResponse.headers("Set-Cookie").forEach { h ->
+            val client = OkHttpClient.Builder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+            val formBody = FormBody.Builder()
+                .add("g-recaptcha-response", UUID.randomUUID().toString())
+                .build()
+            val request = Request.Builder()
+                .url("https://net52.cc/verify.php")
+                .post(formBody)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+                .header("Referer", "https://net22.cc/verify2")
+                .header("Origin", "https://net22.cc")
+                .build()
+            val response = client.newCall(request).execute()
+            response.headers("Set-Cookie").forEach { h ->
                 if (h.contains("t_hash_t=")) {
                     cookie = h.substringAfter("t_hash_t=").substringBefore(";")
                 }
             }
-            if (cookie.isEmpty()) {
-                cookie = homeResp.cookies["t_hash_t"] ?: ""
+            response.close()
+        } catch (_: Exception) {}
+    }
+
+    if (cookie.isEmpty()) return BypassResult("", "", "", "")
+
+    val doc = homeResp.document
+    val html = doc.html()
+
+    // Check if there's NO ad wall
+    if (!html.contains("We Need Support") || !html.contains("open-support")) {
+        val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
+        val result = BypassResult(cookie, "", "", dataTime)
+        cachedBypass = result
+        cachedBypassTime = System.currentTimeMillis()
+        BypassStorage.save(result)
+        return result
+    }
+
+    // Ad wall exists - extract addhash
+    val addhash = doc.selectFirst("body")?.attr("data-addhash") ?: ""
+    val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
+
+    if (addhash.isBlank()) {
+        val result = BypassResult(cookie, "", "", dataTime)
+        cachedBypass = result
+        cachedBypassTime = System.currentTimeMillis()
+        BypassStorage.save(result)
+        return result
+    }
+
+    // Extract Qury and Vsite2 from page JavaScript
+    val qury = Regex("""Qury\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "ffr455"
+    val vsite = Regex("""Vsite2\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "userver"
+
+    // Simulate ad click
+    val adClickUrl = "https://$vsite.net77.cc/?$qury=$addhash&a=y&t=${Math.random()}"
+    try {
+        app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$MAIN_URL/mobile/home?app=1")
+    } catch (_: Exception) {}
+
+    // Wait for ad to "complete" — 10 seconds (minimum needed for server to accept)
+    kotlinx.coroutines.delay(10000)
+
+    // Step 4: POST to verify2.php with addhash to confirm ad was watched
+    // Retry up to 6 times with 1.5-second delays (was 10x2s = max 20s, now 6x1.5s = max 9s)
+    var usertoken = ""
+    var finalCookie = cookie
+    for (attempt in 1..6) {
+        kotlinx.coroutines.delay(1500)
+        try {
+            val verifyResp = app.post(
+                "$MAIN_URL/mobile/verify2.php",
+                data = mapOf("verify" to addhash),
+                headers = BROWSER_HEADERS,
+                referer = "$MAIN_URL/mobile/home?app=1"
+            )
+            // Extract updated cookie
+            val newCookie = verifyResp.cookies["t_hash_t"]
+            if (!newCookie.isNullOrBlank()) finalCookie = newCookie
+
+            val body = verifyResp.text
+            val json = tryParseJson<Map<String, String>>(body)
+            if (json != null) {
+                val status = json["statusup"] ?: ""
+                if (status.equals("All Done", ignoreCase = true)) {
+                    // Extract usertoken
+                    usertoken = json["usertoken"] ?: json["token"] ?: json["utoken"] ?: json["user_token"] ?: ""
+                    break
+                }
             }
         } catch (_: Exception) {}
     }
 
-    if (cookie.isEmpty()) return BypassResult("", "", USER_TOKEN, "")
-
-    val result = BypassResult(cookie, "", USER_TOKEN, "")
+    val result = BypassResult(finalCookie, addhash, usertoken, dataTime)
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
     BypassStorage.save(result)
@@ -138,28 +182,17 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Play
         "t_hash_t" to bypass.cookie,
         "hd" to "on",
         "ott" to ott,
-        "user_token" to USER_TOKEN
+        "user_token" to "233123f803cf02184bf6c67e149cdd50"
     )
     if (bypass.addhash.isNotEmpty()) cookies["addhash"] = bypass.addhash
+    if (bypass.usertoken.isNotEmpty()) cookies["usertoken"] = bypass.usertoken
 
-    val baseUrl = MAIN_URL
-    val response = try {
-        app.get(
-            "$baseUrl/mobile/$playlistPath?id=$id",
-            headers = BROWSER_HEADERS,
-            referer = "$baseUrl/home",
-            cookies = cookies
-        ).text
-    } catch (_: Exception) {
-        return null
-    }
-
-    // Detect rate-limit/ad penalty responses — reject them
-    if (response.contains("too many requests", ignoreCase = true) ||
-        response.contains("stop abuse", ignoreCase = true) ||
-        response.contains("rate limit", ignoreCase = true)) {
-        return null
-    }
+    val response = app.get(
+        "$MAIN_URL/mobile/$playlistPath?id=$id",
+        headers = BROWSER_HEADERS,
+        referer = "$MAIN_URL/home",
+        cookies = cookies
+    ).text
 
     // Try JSON array format: [{"sources":[...],"tracks":[...]}]
     try {
@@ -181,7 +214,7 @@ suspend fun getPlaylistLink(id: String, ott: String, playlistPath: String): Play
     // Regex fallback for m3u8
     val m3u8 = Regex("""(/mobile/hls/[^\s"']+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
     if (!m3u8.isNullOrBlank()) {
-        return PlaylistResult(listOf(Source("$baseUrl$m3u8", "Auto", "m3u8")), null)
+        return PlaylistResult(listOf(Source("$MAIN_URL$m3u8", "Auto", "m3u8")), null)
     }
 
     val fullUrl = Regex("""(https?://[^\s"'<>\}\]\\]+\.m3u8[^\s"'<>\}\]\\]*)""").find(response)?.groupValues?.get(1)
@@ -233,61 +266,33 @@ private val NEWTV_DOMAINS = listOf(
 private fun b64(s: String): String = String(Base64.decode(s, Base64.DEFAULT))
 
 @Volatile private var resolvedApiUrl: String = ""
-@Volatile private var apiResolvedTime: Long = 0L
-private val apiMutex = Mutex()
 
 suspend fun resolveNewTvApi(): String {
-    // Cache for 12 hours
-    if (resolvedApiUrl.isNotBlank() && System.currentTimeMillis() - apiResolvedTime < 43_200_000) {
-        return resolvedApiUrl
+    if (resolvedApiUrl.isNotBlank()) return resolvedApiUrl
+    for (encoded in NEWTV_DOMAINS) {
+        val base = b64(encoded).trimEnd('/')
+        try {
+            val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS).text
+            val hash = tryParseJson<TokenResponse>(text)?.token_hash
+            if (!hash.isNullOrBlank()) {
+                resolvedApiUrl = b64(hash).trimEnd('/')
+                return resolvedApiUrl
+            }
+        } catch (_: Exception) {}
     }
-
-    return apiMutex.withLock {
-        // Double-check after lock
-        if (resolvedApiUrl.isNotBlank() && System.currentTimeMillis() - apiResolvedTime < 43_200_000) {
-            return@withLock resolvedApiUrl
-        }
-
-        for (encoded in NEWTV_DOMAINS) {
-            val base = b64(encoded).trimEnd('/')
-            try {
-                val text = app.get("$base/checknewtv.php", headers = NEWTV_HEADERS).text
-                val hash = tryParseJson<TokenResponse>(text)?.token_hash
-                if (!hash.isNullOrBlank()) {
-                    resolvedApiUrl = b64(hash).trimEnd('/')
-                    apiResolvedTime = System.currentTimeMillis()
-                    return@withLock resolvedApiUrl
-                }
-            } catch (_: Exception) {}
-        }
-        ""
-    }
+    return ""
 }
 
 suspend fun getNewTvLink(id: String, ott: String): String? {
     val apiBase = resolveNewTvApi()
     if (apiBase.isEmpty()) return null
-
-    val bypass = cachedBypass
     val headers = NEWTV_HEADERS.toMutableMap().apply {
         put("Ott", ott)
-        put("Usertoken", bypass?.usertoken ?: "")
+        put("Usertoken", "")
     }
-    if (bypass != null && bypass.cookie.isNotEmpty()) {
-        val cookieParts = mutableListOf("t_hash_t=${bypass.cookie}", "hd=on", "ott=$ott")
-        if (bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
-        if (bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
-        headers["Cookie"] = cookieParts.joinToString("; ")
-    }
-
-    try {
-        val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
-        val response = tryParseJson<PlayerResponse>(text)
-        if (!response?.video_link.isNullOrBlank()) {
-            return response!!.video_link
-        }
-    } catch (_: Exception) {}
-    return null
+    val text = app.get("$apiBase/newtv/player.php?id=$id", headers = headers).text
+    val response = tryParseJson<PlayerResponse>(text)
+    return response?.video_link
 }
 
 data class TokenResponse(val token_hash: String? = null)
