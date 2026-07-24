@@ -346,67 +346,73 @@ suspend fun fetchNetmirrorTvHtml(): String {
  * Gets a NewTV usertoken by calling /newtv/otp.php with the OTP header.
  * Uses the default OTP first; if invalid, fetches a fresh OTP from netmirror.gg/tv.
  */
-/** Calls /newtv/otp.php with the given OTP and returns the parsed response. */
-private suspend fun requestOtpToken(apiBase: String, otp: String): NewTvOtpResponse? {
-    return try {
-        tryParseJson<NewTvOtpResponse>(
-            app.get("$apiBase/newtv/otp.php", headers = otpHeaders(otp)).text
-        )
-    } catch (_: Exception) { null }
-}
+@Volatile var newTvDebug: String = ""
 
-/** Fetches a genuinely fresh OTP from netmirror.gg/tv (opens Cloudflare WebView if needed). */
-private suspend fun fetchFreshOtp(): String {
-    val tvHtml = fetchNetmirrorTvHtml()
-    val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
-        ?: Regex("""const\s+otp\s*=\s*\[([^\]]*)]""").find(tvHtml)
-    return match?.groupValues?.get(1)
-        ?.replace(Regex("""\s*,\s*"""), "")
-        ?.replace(" ", "")
-        ?.replace("\"", "")
-        ?.replace("'", "")
-        ?: ""
-}
-
-/**
- * Gets a NewTV usertoken.
- *  - forceRefresh = false: use cached token, else try otp.php with saved/default OTP.
- *    NEVER opens the Cloudflare WebView here (avoids double verification).
- *  - forceRefresh = true: fetch a genuinely fresh OTP from netmirror.gg/tv (one WebView),
- *    then exchange it for a usertoken.
- */
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean): String {
+    // Return cached token (valid 12h) — only when NOT force refreshing
     if (!forceRefresh) {
-        // Reuse a valid cached token — no network, no verification
         val cached = NewTvStore.tokens[ott]
         if (cached != null && cached.first.isNotEmpty() &&
             System.currentTimeMillis() - cached.second < 43_200_000
         ) {
             return cached.first
         }
-        // Try with the saved/default OTP (no Cloudflare WebView here)
-        val otp = if (NewTvStore.otp.isNotEmpty()) NewTvStore.otp else DEFAULT_OTP
-        val resp = requestOtpToken(apiBase, otp)
-        val token = resp?.usertoken ?: ""
-        if (token.isNotEmpty()) {
-            NewTvStore.tokens[ott] = token to System.currentTimeMillis()
-        }
-        return token
     }
 
-    // Force refresh: get a genuinely fresh OTP (one Cloudflare WebView)
-    val fresh = fetchFreshOtp()
-    val otp = if (fresh.isNotEmpty()) {
-        NewTvStore.otp = fresh
-        BypassStorage.saveOtp(fresh)
-        fresh
-    } else {
-        if (NewTvStore.otp.isNotEmpty()) NewTvStore.otp else DEFAULT_OTP
+    // On force refresh, discard the cached OTP so we fetch a genuinely fresh one
+    if (forceRefresh) {
+        NewTvStore.otp = ""
     }
-    val resp = requestOtpToken(apiBase, otp)
-    val token = resp?.usertoken ?: ""
+
+    var currentOtp = if (NewTvStore.otp.isNotEmpty()) NewTvStore.otp else DEFAULT_OTP
+
+    var otpResponse = try {
+        tryParseJson<NewTvOtpResponse>(
+            app.get("$apiBase/newtv/otp.php", headers = otpHeaders(currentOtp)).text
+        )
+    } catch (_: Exception) { null }
+
+    newTvDebug = "o=$currentOtp st=${otpResponse?.status} tk=${otpResponse?.usertoken?.take(5)} er=${otpResponse?.error_msg?.take(12)} pm=${otpResponse?.pub_msg?.take(12)}"
+
+    // Fetch a fresh OTP from netmirror.gg/tv when:
+    //  - the OTP is invalid, OR
+    //  - we're force-refreshing (previous token produced a penalty/blank stream)
+    val needFresh = forceRefresh ||
+        (otpResponse?.status == "error" &&
+            otpResponse.error_msg == "Invalid OTP, Please Enter Valid OTP")
+
+    if (needFresh) {
+        val tvHtml = fetchNetmirrorTvHtml()
+        val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(tvHtml)
+            ?: Regex("""const\s+otp\s*=\s*\[([^\]]*)]""").find(tvHtml)
+        if (match != null) {
+            val newOtp = match.groupValues[1]
+                .replace(Regex("""\s*,\s*"""), "")
+                .replace(" ", "")
+                .replace("\"", "")
+                .replace("'", "")
+            if (newOtp.isNotEmpty() && newOtp != currentOtp) {
+                currentOtp = newOtp
+                NewTvStore.otp = newOtp
+                BypassStorage.saveOtp(newOtp)
+                otpResponse = try {
+                    tryParseJson<NewTvOtpResponse>(
+                        app.get("$apiBase/newtv/otp.php", headers = otpHeaders(currentOtp)).text
+                    )
+                } catch (_: Exception) { null }
+                newTvDebug = "FRESH o=$currentOtp st=${otpResponse?.status} tk=${otpResponse?.usertoken?.take(5)} pm=${otpResponse?.pub_msg?.take(12)}"
+            } else {
+                newTvDebug += " |noOtpOnPage"
+            }
+        } else {
+            newTvDebug += " |noConstOtp"
+        }
+    }
+
+    val token = otpResponse?.usertoken ?: ""
     if (token.isNotEmpty()) {
         NewTvStore.tokens[ott] = token to System.currentTimeMillis()
+        BypassStorage.saveTokens(NewTvStore.tokens)
     }
     return token
 }
@@ -432,37 +438,23 @@ private suspend fun fetchPlayerLink(apiBase: String, id: String, ott: String, us
     } catch (_: Exception) { null }
 }
 
-/** Persist the working token + otp so playback survives app restarts (12h). */
-private fun persistWorkingSession(ott: String, token: String) {
-    NewTvStore.tokens[ott] = token to System.currentTimeMillis()
-    BypassStorage.saveTokens(NewTvStore.tokens)
-    if (NewTvStore.otp.isNotEmpty()) BypassStorage.saveOtp(NewTvStore.otp)
-    if (cachedCfClearance.isNotEmpty()) BypassStorage.saveCfClearance(cachedCfClearance)
-}
-
 suspend fun getNewTvLink(id: String, ott: String): String? {
     val apiBase = resolveNewTvApi()
     if (apiBase.isEmpty()) return null
 
-    // Step 1: cached/default token (no verification)
+    // Step 1: usertoken via OTP flow (cached token first)
     var userToken = getNewTvUserToken(apiBase, ott, false)
     var link = fetchPlayerLink(apiBase, id, ott, userToken)
 
-    if (isSignedNewTvLink(link)) {
-        persistWorkingSession(ott, userToken)
-        return link
+    // Step 2: if link is missing OR unsigned (= penalty stream), force a fresh
+    // unique OTP from netmirror.gg/tv and retry
+    if (!isSignedNewTvLink(link)) {
+        userToken = getNewTvUserToken(apiBase, ott, true)
+        val retry = fetchPlayerLink(apiBase, id, ott, userToken)
+        if (!retry.isNullOrBlank()) link = retry
     }
 
-    // Step 2: unsigned (penalty) or blank — do ONE fresh verification
-    userToken = getNewTvUserToken(apiBase, ott, true)
-    val retry = fetchPlayerLink(apiBase, id, ott, userToken)
-    if (isSignedNewTvLink(retry)) {
-        persistWorkingSession(ott, userToken)
-        return retry
-    }
-
-    // Fall back to whatever we got (may still be penalty)
-    return retry ?: link
+    return link
 }
 
 data class TokenResponse(val token_hash: String? = null)

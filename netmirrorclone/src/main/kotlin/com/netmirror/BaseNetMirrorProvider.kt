@@ -25,10 +25,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val episodesPath: String
     abstract val playlistPath: String
 
-    /** Route posters through wsrv.nl image CDN (resized + cached) for fast loading. */
-    private fun img(url: String, w: Int = 400): String =
-        "https://wsrv.nl/?url=${java.net.URLEncoder.encode(url, "UTF-8")}&w=$w&output=webp&q=70"
-
     private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
         val c = mutableMapOf("ott" to ott, "hd" to "on")
@@ -86,7 +82,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
         if (id.isBlank()) return null
         return newAnimeSearchResponse("", Id(id).toJson()) {
-            posterUrl = img("https://imgcdn.kim/$imgPrefix/v/$id.jpg")
+            posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
     }
 
@@ -99,7 +96,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val data = tryParseJson<SearchData>(text) ?: return emptyList()
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
-                posterUrl = img("https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg")
+                posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
     }
@@ -120,7 +118,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
-                posterUrl = img("https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg")
+                posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
 
@@ -132,7 +131,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     this.name = it.t
                     this.episode = it.ep.replace("E", "").toIntOrNull()
                     this.season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = img("https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg", 300)
+                    this.posterUrl = "https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -146,8 +145,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
         val type = if (data.episodes.firstOrNull() == null) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = img("https://imgcdn.kim/$imgPrefix/v/$id.jpg", 500)
-            backgroundPosterUrl = img("https://imgcdn.kim/$imgPrefix/h/$id.jpg", 800)
+            posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
+            backgroundPosterUrl = "https://imgcdn.kim/$imgPrefix/h/$id.jpg"
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc
             year = data.year.toIntOrNull()
             tags = genre
@@ -172,7 +172,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = img("https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg", 300)
+                    this.posterUrl = "https://imgcdn.kim/${epImgPrefix}/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
