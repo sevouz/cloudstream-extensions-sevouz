@@ -377,21 +377,24 @@ private suspend fun fetchFreshOtp(): String {
  */
 suspend fun getNewTvUserToken(apiBase: String, ott: String, forceRefresh: Boolean): String {
     if (!forceRefresh) {
-        // Reuse a valid cached token — no network, no verification
+        // Regenerate a fresh usertoken from the saved OTP each time (no Cloudflare WebView).
+        // The OTP is long-lived server-side; the usertoken it produces is short-lived, so we
+        // must re-exchange the OTP for a fresh token rather than reuse a stale cached token.
+        val otp = if (NewTvStore.otp.isNotEmpty()) NewTvStore.otp else DEFAULT_OTP
+        val resp = requestOtpToken(apiBase, otp)
+        val token = resp?.usertoken ?: ""
+        if (token.isNotEmpty()) {
+            NewTvStore.tokens[ott] = token to System.currentTimeMillis()
+            return token
+        }
+        // OTP failed/expired — fall back to a recently cached token if still fresh
         val cached = NewTvStore.tokens[ott]
         if (cached != null && cached.first.isNotEmpty() &&
             System.currentTimeMillis() - cached.second < 43_200_000
         ) {
             return cached.first
         }
-        // Try with the saved/default OTP (no Cloudflare WebView here)
-        val otp = if (NewTvStore.otp.isNotEmpty()) NewTvStore.otp else DEFAULT_OTP
-        val resp = requestOtpToken(apiBase, otp)
-        val token = resp?.usertoken ?: ""
-        if (token.isNotEmpty()) {
-            NewTvStore.tokens[ott] = token to System.currentTimeMillis()
-        }
-        return token
+        return ""
     }
 
     // Force refresh: get a genuinely fresh OTP (one Cloudflare WebView)
