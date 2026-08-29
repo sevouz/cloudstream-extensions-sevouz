@@ -20,7 +20,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val ott: String
     abstract val imgPrefix: String
     abstract val epImgPrefix: String
-    open val homePath: String = "home?app=1"   // override in subclasses that use a different endpoint
     abstract val searchPath: String
     abstract val postPath: String
     abstract val episodesPath: String
@@ -48,18 +47,12 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Prime Video uses a dedicated JSON homepage endpoint
-        if (homePath != "home?app=1") {
-            return getMainPageJson()
-        }
-
-        // Netflix / Hotstar: HTML tray parsing
         // Try with quick (non-blocking) cookies first
         var doc = app.get(
-            "$mainUrl/mobile/$homePath",
+            "$mainUrl/mobile/home?app=1",
             cookies = quickCookies(),
             headers = BROWSER_HEADERS,
-            referer = "$mainUrl/mobile/$homePath"
+            referer = "$mainUrl/mobile/home?app=1"
         ).document
         var items = doc.select(".tray-container, #top10").mapNotNull { section ->
             val name = section.select("h2, span").text()
@@ -70,10 +63,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         // If quick cookies didn't work (empty results), fallback to full bypass
         if (items.isEmpty()) {
             doc = app.get(
-                "$mainUrl/mobile/$homePath",
+                "$mainUrl/mobile/home?app=1",
                 cookies = cookies(),
                 headers = BROWSER_HEADERS,
-                referer = "$mainUrl/mobile/$homePath"
+                referer = "$mainUrl/mobile/home?app=1"
             ).document
             items = doc.select(".tray-container, #top10").mapNotNull { section ->
                 val name = section.select("h2, span").text()
@@ -81,48 +74,6 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                 if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
             }
         }
-
-        return newHomePageResponse(items, false)
-    }
-
-    /** Prime Video home page returns JSON: { post: [ { cate, ids }, ... ] } */
-    private suspend fun getMainPageJson(): HomePageResponse {
-        val text = try {
-            app.get(
-                "$mainUrl/mobile/$homePath",
-                cookies = quickCookies(),
-                headers = BROWSER_HEADERS,
-                referer = "$mainUrl/home"
-            ).text
-        } catch (_: Exception) { "" }
-
-        var root = tryParseJson<PrimeHomeData>(text)
-
-        // Fallback to full bypass if quick cookies returned nothing useful
-        if (root == null || root.post.isNullOrEmpty()) {
-            val text2 = try {
-                app.get(
-                    "$mainUrl/mobile/$homePath",
-                    cookies = cookies(),
-                    headers = BROWSER_HEADERS,
-                    referer = "$mainUrl/home"
-                ).text
-            } catch (_: Exception) { "" }
-            root = tryParseJson<PrimeHomeData>(text2)
-        }
-
-        val items = root?.post?.mapNotNull { group ->
-            val cateName = group.cate?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val ids = group.ids?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-            if (ids.isNullOrEmpty()) return@mapNotNull null
-            val list = ids.map { id ->
-                newAnimeSearchResponse("", Id(id).toJson()) {
-                    posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
-                    posterHeaders = mapOf("Referer" to "$mainUrl/home")
-                }
-            }
-            HomePageList(cateName, list, isHorizontalImages = false)
-        } ?: emptyList()
 
         return newHomePageResponse(items, false)
     }
