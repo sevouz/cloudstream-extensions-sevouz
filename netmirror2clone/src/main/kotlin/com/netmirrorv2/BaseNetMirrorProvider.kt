@@ -25,7 +25,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val episodesPath: String
     abstract val playlistPath: String
 
-    protected suspend fun cookies(): Map<String, String> {
+    private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
         val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass.cookie.isNotEmpty()) c["t_hash_t"] = bypass.cookie
@@ -35,7 +35,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     /** Quick cookies using cached bypass if available, without blocking */
-    protected fun quickCookies(): Map<String, String> {
+    private fun quickCookies(): Map<String, String> {
         val bypass = cachedBypass
         val c = mutableMapOf("ott" to ott, "hd" to "on")
         if (bypass != null && bypass.cookie.isNotEmpty()) {
