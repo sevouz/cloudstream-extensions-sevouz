@@ -498,3 +498,7 @@ data class PostData(
 )
 data class EpisodesData(val episodes: List<EpisodeItem>? = null, val nextPage: Int = 0, val nextPageSeason: String = "", val nextPageShow: Int = 0)
 
+// Prime Video homepage JSON: { post: [ { cate: "Trending", ids: "123,456,789" }, ... ] }
+data class PrimeHomeGroup(val cate: String? = null, val ids: String? = null)
+data class PrimeHomeData(val post: List<PrimeHomeGroup>? = null)
+
