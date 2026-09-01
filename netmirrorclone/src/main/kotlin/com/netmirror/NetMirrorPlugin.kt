@@ -11,12 +11,22 @@ import kotlinx.coroutines.launch
 class NetMirrorPlugin : Plugin() {
     override fun load(context: Context) {
         try { BypassStorage.init(context) } catch (_: Throwable) {}
-        // Pre-fetch bypass in background so content loads instantly
+
+        val netflix = NetflixProvider()
+        val prime = PrimeVideoProvider()
+        val hotstar = HotstarProvider()
+
+        registerMainAPI(netflix)
+        registerMainAPI(prime)
+        registerMainAPI(hotstar)
+
+        // Pre-warm bypass + all 3 home pages in parallel so first open is instant
         CoroutineScope(Dispatchers.IO).launch {
             try { ensureBypass() } catch (_: Throwable) {}
+            // Fire all 3 home page fetches simultaneously after bypass is ready
+            launch { try { netflix.prewarmHome() } catch (_: Throwable) {} }
+            launch { try { prime.prewarmHome() } catch (_: Throwable) {} }
+            launch { try { hotstar.prewarmHome() } catch (_: Throwable) {} }
         }
-        registerMainAPI(NetflixProvider())
-        registerMainAPI(PrimeVideoProvider())
-        registerMainAPI(HotstarProvider())
     }
 }

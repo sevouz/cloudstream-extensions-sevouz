@@ -6,8 +6,11 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Element
@@ -31,6 +34,50 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     // Poster URL cache: id -> full CDN URL. Avoids repeated string construction on re-renders.
     private val posterCache = ConcurrentHashMap<String, String>(256)
 
+    // Home page result cache: holds the last fetched result and when it was fetched.
+    // Served instantly on repeat opens; refreshed in the background after 5 minutes.
+    @Volatile private var cachedHomeItems: List<HomePageList>? = null
+    @Volatile private var cachedHomeTime: Long = 0L
+    private val HOME_CACHE_TTL = 5 * 60 * 1000L // 5 minutes
+
+    /** Fetch home page from network and cache the result. Called at plugin load and on TTL expiry. */
+    suspend fun prewarmHome() {
+        try {
+            val fetched = fetchHomeItems() ?: return
+            cachedHomeItems = fetched
+            cachedHomeTime = System.currentTimeMillis()
+        } catch (_: Throwable) {}
+    }
+
+    private suspend fun fetchHomeItems(): List<HomePageList>? {
+        val doc = app.get(
+            "$mainUrl/mobile/home?app=1",
+            cookies = quickCookies(),
+            headers = BROWSER_HEADERS,
+            referer = "$mainUrl/mobile/home?app=1"
+        ).document
+        var sections = doc.select(".tray-container, #top10")
+        if (sections.isEmpty()) {
+            val doc2 = app.get(
+                "$mainUrl/mobile/home?app=1",
+                cookies = cookies(),
+                headers = BROWSER_HEADERS,
+                referer = "$mainUrl/mobile/home?app=1"
+            ).document
+            sections = doc2.select(".tray-container, #top10")
+        }
+        if (sections.isEmpty()) return null
+        return coroutineScope {
+            sections.map { section ->
+                async {
+                    val name = section.select("h2, span").first()?.text() ?: return@async null
+                    val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
+                    if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
+                }
+            }.mapNotNull { it.await() }
+        }.ifEmpty { null }
+    }
+
     private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
         val c = mutableMapOf("ott" to ott, "hd" to "on")
@@ -53,39 +100,23 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Try with quick (non-blocking) cookies first
-        val doc = app.get(
-            "$mainUrl/mobile/home?app=1",
-            cookies = quickCookies(),
-            headers = BROWSER_HEADERS,
-            referer = "$mainUrl/mobile/home?app=1"
-        ).document
+        val now = System.currentTimeMillis()
+        val cached = cachedHomeItems
 
-        var sections = doc.select(".tray-container, #top10")
-
-        // If empty (bypass not ready yet), fetch again with a full blocking bypass
-        if (sections.isEmpty()) {
-            val doc2 = app.get(
-                "$mainUrl/mobile/home?app=1",
-                cookies = cookies(),
-                headers = BROWSER_HEADERS,
-                referer = "$mainUrl/mobile/home?app=1"
-            ).document
-            sections = doc2.select(".tray-container, #top10")
+        return if (cached != null && cached.isNotEmpty()) {
+            // Serve cached result instantly
+            if (now - cachedHomeTime > HOME_CACHE_TTL) {
+                // Cache stale — refresh in background, don't block the UI
+                CoroutineScope(Dispatchers.IO).launch { prewarmHome() }
+            }
+            newHomePageResponse(cached, false)
+        } else {
+            // No cache yet — must fetch now (first open after install or app kill)
+            val items = fetchHomeItems() ?: emptyList()
+            cachedHomeItems = items
+            cachedHomeTime = now
+            newHomePageResponse(items, false)
         }
-
-        // Parse all sections in parallel for maximum speed
-        val items = coroutineScope {
-            sections.map { section ->
-                async {
-                    val name = section.select("h2, span").first()?.text() ?: return@async null
-                    val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
-                    if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
-                }
-            }.mapNotNull { it.await() }
-        }
-
-        return newHomePageResponse(items, false)
     }
 
     private fun posterUrl(id: String): String =
