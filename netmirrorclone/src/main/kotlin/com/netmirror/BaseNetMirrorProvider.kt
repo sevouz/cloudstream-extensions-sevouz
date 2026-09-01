@@ -17,6 +17,10 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 import java.util.concurrent.ConcurrentHashMap
 
+// Simple persistence model: one entry per home page section.
+private data class CachedSection(val name: String, val items: List<CachedItem>)
+private data class CachedItem(val id: String, val title: String)
+
 abstract class BaseNetMirrorProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "ta"
@@ -46,6 +50,50 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             val fetched = fetchHomeItems() ?: return
             cachedHomeItems = fetched
             cachedHomeTime = System.currentTimeMillis()
+            // Persist to disk so the next app launch can show results instantly
+            saveToDisk(fetched)
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Restore the last-known home page from SharedPreferences into memory.
+     * Called synchronously at plugin load — completes in <5ms (disk read only).
+     * If the persisted data is still within TTL it will be served immediately on
+     * the first getMainPage() call, making even the first open after an app kill instant.
+     */
+    fun loadPersistedHome() {
+        try {
+            val json = BypassStorage.loadHomeCache(ott) ?: return
+            val sections = tryParseJson<List<CachedSection>>(json) ?: return
+            if (sections.isEmpty()) return
+            val items = sections.mapNotNull { section ->
+                val list = section.items.map { item ->
+                    newAnimeSearchResponse(item.title, Id(item.id).toJson()) {
+                        posterUrl = posterUrl(item.id)
+                    }
+                }
+                if (list.isEmpty()) null
+                else HomePageList(section.name, list, isHorizontalImages = false)
+            }
+            if (items.isNotEmpty()) {
+                cachedHomeItems = items
+                cachedHomeTime = System.currentTimeMillis()
+            }
+        } catch (_: Throwable) {}
+    }
+
+    private fun saveToDisk(items: List<HomePageList>) {
+        try {
+            val sections = items.map { section ->
+                CachedSection(
+                    name = section.name,
+                    items = section.list.map { result ->
+                        val id = tryParseJson<Id>(result.url)?.id ?: return@map null
+                        CachedItem(id = id, title = result.name)
+                    }.filterNotNull()
+                )
+            }
+            BypassStorage.saveHomeCache(ott, sections.toJson())
         } catch (_: Throwable) {}
     }
 

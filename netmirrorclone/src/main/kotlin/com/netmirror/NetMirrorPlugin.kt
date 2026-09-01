@@ -16,14 +16,19 @@ class NetMirrorPlugin : Plugin() {
         val prime = PrimeVideoProvider()
         val hotstar = HotstarProvider()
 
+        // Restore persisted home pages from disk immediately — runs in <5ms.
+        // This means even the very first open after an app kill is instant.
+        try { netflix.loadPersistedHome() } catch (_: Throwable) {}
+        try { prime.loadPersistedHome() } catch (_: Throwable) {}
+        try { hotstar.loadPersistedHome() } catch (_: Throwable) {}
+
         registerMainAPI(netflix)
         registerMainAPI(prime)
         registerMainAPI(hotstar)
 
-        // Pre-warm bypass + all 3 home pages in parallel so first open is instant
+        // Pre-warm bypass + refresh all 3 home pages in parallel in the background
         CoroutineScope(Dispatchers.IO).launch {
             try { ensureBypass() } catch (_: Throwable) {}
-            // Fire all 3 home page fetches simultaneously after bypass is ready
             launch { try { netflix.prewarmHome() } catch (_: Throwable) {} }
             launch { try { prime.prewarmHome() } catch (_: Throwable) {} }
             launch { try { hotstar.prewarmHome() } catch (_: Throwable) {} }

@@ -6,6 +6,28 @@ import android.content.SharedPreferences
 object BypassStorage {
     private var prefs: SharedPreferences? = null
 
+    // ── Home page cache (per OTT) ────────────────────────────────────────────
+    // Stored as JSON string so the UI can render immediately after an app kill.
+    // TTL matches the in-memory cache: 5 minutes.
+    private const val HOME_CACHE_TTL = 5 * 60 * 1000L
+
+    fun saveHomeCache(ott: String, json: String) {
+        prefs?.edit()?.apply {
+            putString("home_cache_$ott", json)
+            putLong("home_cache_ts_$ott", System.currentTimeMillis())
+            apply()
+        }
+    }
+
+    /** Returns the cached JSON if still within TTL, otherwise null. */
+    fun loadHomeCache(ott: String): String? {
+        val ts = prefs?.getLong("home_cache_ts_$ott", 0L) ?: 0L
+        if (System.currentTimeMillis() - ts > HOME_CACHE_TTL) return null
+        val json = prefs?.getString("home_cache_$ott", null)
+        return if (json.isNullOrEmpty()) null else json
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     fun init(context: Context) {
         try {
             prefs = context.getSharedPreferences("NetMirrorBypassPrefs", Context.MODE_PRIVATE)
