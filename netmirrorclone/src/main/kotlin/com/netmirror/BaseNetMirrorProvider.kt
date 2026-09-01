@@ -6,10 +6,13 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
+import java.util.concurrent.ConcurrentHashMap
 
 abstract class BaseNetMirrorProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -24,6 +27,9 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     abstract val postPath: String
     abstract val episodesPath: String
     abstract val playlistPath: String
+
+    // Poster URL cache: id -> full CDN URL. Avoids repeated string construction on re-renders.
+    private val posterCache = ConcurrentHashMap<String, String>(256)
 
     private suspend fun cookies(): Map<String, String> {
         val bypass = ensureBypass()
@@ -48,42 +54,52 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         // Try with quick (non-blocking) cookies first
-        var doc = app.get(
+        val doc = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = quickCookies(),
             headers = BROWSER_HEADERS,
             referer = "$mainUrl/mobile/home?app=1"
         ).document
-        var items = doc.select(".tray-container, #top10").mapNotNull { section ->
-            val name = section.select("h2, span").text()
-            val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
-            if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
-        }
 
-        // If quick cookies didn't work (empty results), fallback to full bypass
-        if (items.isEmpty()) {
-            doc = app.get(
+        var sections = doc.select(".tray-container, #top10")
+
+        // If empty (bypass not ready yet), fetch again with a full blocking bypass
+        if (sections.isEmpty()) {
+            val doc2 = app.get(
                 "$mainUrl/mobile/home?app=1",
                 cookies = cookies(),
                 headers = BROWSER_HEADERS,
                 referer = "$mainUrl/mobile/home?app=1"
             ).document
-            items = doc.select(".tray-container, #top10").mapNotNull { section ->
-                val name = section.select("h2, span").text()
-                val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
-                if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
-            }
+            sections = doc2.select(".tray-container, #top10")
+        }
+
+        // Parse all sections in parallel for maximum speed
+        val items = coroutineScope {
+            sections.map { section ->
+                async {
+                    val name = section.select("h2, span").first()?.text() ?: return@async null
+                    val list = section.select("article, .top10-post").mapNotNull { it.toResult() }
+                    if (list.isEmpty()) null else HomePageList(name, list, isHorizontalImages = false)
+                }
+            }.mapNotNull { it.await() }
         }
 
         return newHomePageResponse(items, false)
     }
 
+    private fun posterUrl(id: String): String =
+        posterCache.getOrPut(id) { "https://imgcdn.kim/$imgPrefix/v/$id.jpg" }
+
     private fun Element.toResult(): SearchResponse? {
         val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
         if (id.isBlank()) return null
-        return newAnimeSearchResponse("", Id(id).toJson()) {
-            posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        // Extract title from img alt or h3/p text so cards render immediately without a detail fetch
+        val title = selectFirst("img")?.attr("alt")?.trim()
+            ?: selectFirst("h3, p, .title")?.text()?.trim()
+            ?: ""
+        return newAnimeSearchResponse(title, Id(id).toJson()) {
+            posterUrl = posterUrl(id)
         }
     }
 
@@ -96,8 +112,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val data = tryParseJson<SearchData>(text) ?: return emptyList()
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
-                posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                posterUrl = posterUrl(it.id)
             }
         }
     }
@@ -118,8 +133,7 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
-                posterUrl = "https://imgcdn.kim/$imgPrefix/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                posterUrl = posterUrl(it.id)
             }
         }
 
@@ -145,9 +159,8 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
         val type = if (data.episodes.firstOrNull() == null) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = "https://imgcdn.kim/$imgPrefix/v/$id.jpg"
+            posterUrl = posterUrl(id)
             backgroundPosterUrl = "https://imgcdn.kim/$imgPrefix/h/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc
             year = data.year.toIntOrNull()
             tags = genre
