@@ -2,6 +2,7 @@
 version = 1
 
 android {
+    namespace = "com.cncversev2"
     buildFeatures {
         buildConfig = true
     }
