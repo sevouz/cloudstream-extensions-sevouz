@@ -283,21 +283,33 @@ abstract class BaseNetMirrorProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         var hasLink = false
 
+        val streamHeaders = mapOf(
+            "Cookie"  to "hd=on",
+            "Referer" to MAIN_URL,
+            "Origin"  to MAIN_URL
+        )
+
         // Primary: NewTV API (ad-free, OTP-authenticated)
         val newTvM3u8 = try { getNewTvLink(ld.id, ott) } catch (_: Exception) { null }
         if (!newTvM3u8.isNullOrBlank()) {
-            callback.invoke(
-                newExtractorLink(name, "$name NewTV", newTvM3u8, type = ExtractorLinkType.M3U8) {
-                    this.referer = MAIN_URL
-                    this.quality = Qualities.P1080.value
-                    this.headers = mapOf(
-                        "Cookie" to "hd=on",
-                        "Referer" to MAIN_URL,
-                        "Origin" to MAIN_URL
-                    )
-                }
-            )
             hasLink = true
+            // Fetch master playlist and emit one link per quality rendition
+            val emitted = emitM3u8Tracks(
+                masterUrl   = newTvM3u8,
+                sourceName  = "$name NewTV",
+                headers     = streamHeaders,
+                callback    = callback
+            )
+            // If master parse failed, fall back to a single link
+            if (!emitted) {
+                callback.invoke(
+                    newExtractorLink(name, "$name NewTV", newTvM3u8, type = ExtractorLinkType.M3U8) {
+                        this.referer  = MAIN_URL
+                        this.quality  = Qualities.P1080.value
+                        this.headers  = streamHeaders
+                    }
+                )
+            }
         }
 
         // Playlist API — used for subtitles always, and as a video fallback only if NewTV failed
@@ -309,37 +321,98 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             if (!hasLink) {
                 val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
                 if (source != null) {
-                    val url = source.file!!
-                    val fullUrl = if (url.startsWith("http")) url else "$MAIN_URL$url"
-                    callback.invoke(
-                        newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
-                            this.referer = MAIN_URL
-                            this.quality = Qualities.P1080.value
-                            this.headers = mapOf(
-                                "Cookie" to "hd=on",
-                                "Referer" to MAIN_URL,
-                                "Origin" to MAIN_URL
-                            )
-                        }
-                    )
+                    val masterUrl = source.file!!.let {
+                        if (it.startsWith("http")) it else "$MAIN_URL$it"
+                    }
                     hasLink = true
+                    val emitted = emitM3u8Tracks(
+                        masterUrl  = masterUrl,
+                        sourceName = name,
+                        headers    = streamHeaders,
+                        callback   = callback
+                    )
+                    if (!emitted) {
+                        callback.invoke(
+                            newExtractorLink(name, name, masterUrl, type = ExtractorLinkType.M3U8) {
+                                this.referer  = MAIN_URL
+                                this.quality  = Qualities.P1080.value
+                                this.headers  = streamHeaders
+                            }
+                        )
+                    }
                 }
             }
 
             // Subtitles (from playlist response)
             result.tracks?.forEach { track ->
-                val url = track.file ?: return@forEach
+                val url   = track.file  ?: return@forEach
                 val label = track.label ?: "Unknown"
-                val kind = track.kind ?: ""
+                val kind  = track.kind  ?: ""
                 if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
-                    subtitleCallback.invoke(
-                        SubtitleFile(label, url)
-                    )
+                    subtitleCallback.invoke(SubtitleFile(label, url))
                 }
             }
         }
 
         return hasLink
+    }
+
+    /**
+     * Fetches [masterUrl], parses every #EXT-X-STREAM-INF rendition, and fires
+     * [callback] once per track with the correct quality label.
+     * Returns true if at least one rendition was emitted, false if the playlist
+     * couldn't be fetched or had no renditions (caller should fall back).
+     */
+    private suspend fun emitM3u8Tracks(
+        masterUrl:  String,
+        sourceName: String,
+        headers:    Map<String, String>,
+        callback:   (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val m3u8Text = app.get(masterUrl, headers = headers).text
+            val lines = m3u8Text.lines()
+            var emitted = false
+            var i = 0
+            while (i < lines.size) {
+                val line = lines[i].trim()
+                if (line.startsWith("#EXT-X-STREAM-INF")) {
+                    // Parse RESOLUTION=WxH and BANDWIDTH from the tag
+                    val resolution  = Regex("""RESOLUTION=(\d+)x(\d+)""").find(line)
+                    val bandwidth   = Regex("""BANDWIDTH=(\d+)""").find(line)?.groupValues?.get(1)?.toLongOrNull()
+                    val height      = resolution?.groupValues?.get(2)?.toIntOrNull()
+                    val quality     = when {
+                        height != null && height >= 2160 -> Qualities.P2160.value
+                        height != null && height >= 1080 -> Qualities.P1080.value
+                        height != null && height >= 720  -> Qualities.P720.value
+                        height != null && height >= 480  -> Qualities.P480.value
+                        height != null && height >= 360  -> Qualities.P360.value
+                        bandwidth != null && bandwidth >= 4_000_000 -> Qualities.P1080.value
+                        bandwidth != null && bandwidth >= 2_000_000 -> Qualities.P720.value
+                        bandwidth != null && bandwidth >= 1_000_000 -> Qualities.P480.value
+                        else -> Qualities.Unknown.value
+                    }
+                    // Next non-comment line is the rendition URL
+                    val segLine = lines.getOrNull(i + 1)?.trim() ?: ""
+                    if (segLine.isNotEmpty() && !segLine.startsWith("#")) {
+                        val trackUrl = if (segLine.startsWith("http")) segLine
+                                       else masterUrl.substringBeforeLast("/") + "/" + segLine
+                        callback.invoke(
+                            newExtractorLink(name, sourceName, trackUrl, type = ExtractorLinkType.M3U8) {
+                                this.referer = MAIN_URL
+                                this.quality = quality
+                                this.headers = headers
+                            }
+                        )
+                        emitted = true
+                        i += 2
+                        continue
+                    }
+                }
+                i++
+            }
+            emitted
+        } catch (_: Exception) { false }
     }
 
     private fun getQualityFromLabel(label: String): Int {
