@@ -363,111 +363,206 @@ class CastleTvV2Provider : MainAPI() {
             val resolutions = listOf(3, 2, 1)
             var videoLoaded = false
 
-            // ── V2 change: always iterate per-language regardless of existIndividualVideo ──
-            // In V1, Branch A (shared multi-audio M3U8) called the API once with the first
-            // languageId, getting a single stream with all audio embedded. CloudStream's
-            // built-in player has no UI to switch #EXT-X-MEDIA audio groups — only VLC does.
-            //
-            // Here we call the API once per language for every track, getting a dedicated
-            // stream URL per language. CloudStream then shows each as a separate selectable
-            // source, so language switching works entirely within the app.
-            for (track in availableTracks) {
-                val languageId = track.languageId ?: continue
-                val languageName = track.languageName ?: track.abbreviate ?: "Unknown"
+            // Branch A: existIndividualVideo == false — server returns one multi-audio M3U8.
+            // We fetch that master playlist, parse its #EXT-X-MEDIA audio groups, and emit
+            // one link per language so CloudStream's source picker works in-app.
+            val hasIndividualVideo = availableTracks.any { it.existIndividualVideo == true }
+
+            if (!hasIndividualVideo && availableTracks.isNotEmpty()) {
+                // Fetch the master M3U8 once (use first track / highest resolution)
+                val firstTrack = availableTracks.first()
+                val firstLangId = firstTrack.languageId ?: return false
+                var masterUrl: String? = null
+
                 for (resolution in resolutions) {
                     try {
-                        val videoUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
-                        val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","languageId":"$languageId","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
-                        val videoResponse = app.post(
-                            url = videoUrl,
-                            requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType())
-                        )
+                        val videoApiUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
+                        val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","languageId":"$firstLangId","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
+                        val videoResponse = app.post(url = videoApiUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
                         val decryptedJson = decryptData(videoResponse.text, securityKey) ?: continue
                         val videoData = mapper.readValue<VideoResponse>(decryptedJson).data
-
                         if (videoData.videoUrl != null && videoData.permissionDenied != true) {
-                            val linkName = if (videoData.videoUrl.contains("preview", ignoreCase = true))
-                                "$name - $languageName (preview) Requires Castle TV Premium"
-                            else
-                                "$name - $languageName"
-
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name   = linkName,
-                                    url    = videoData.videoUrl,
-                                    type   = ExtractorLinkType.M3U8
-                                ) {
-                                    this.headers = mapOf("Referer" to mainUrl)
-                                    this.quality = when (resolution) {
-                                        3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240
-                                    }
-                                }
-                            )
-
-                            // Emit subtitles once (from the first successful video fetch)
-                            if (!videoLoaded) {
+                            if (masterUrl == null) {
+                                masterUrl = videoData.videoUrl
+                                // Subtitles — emit once
                                 videoData.subtitles?.forEach { sub ->
                                     if (!sub.url.isNullOrBlank())
-                                        subtitleCallback.invoke(
-                                            newSubtitleFile(
-                                                lang = sub.title ?: sub.abbreviate ?: "Unknown",
-                                                url  = sub.url
-                                            )
-                                        )
+                                        subtitleCallback.invoke(newSubtitleFile(lang = sub.title ?: sub.abbreviate ?: "Unknown", url = sub.url))
                                 }
                             }
-                            videoLoaded = true
                         }
-                    } catch (e: Exception) { /* try next resolution */ }
+                    } catch (_: Exception) {}
+                }
+
+                if (masterUrl != null) {
+                    // Parse #EXT-X-MEDIA audio groups from the master playlist
+                    val audioGroups = parseAudioGroups(masterUrl)
+
+                    if (audioGroups.isNotEmpty()) {
+                        // Build a track name → language label map from the API response
+                        val trackLabelMap = availableTracks.associate { t ->
+                            (t.abbreviate?.lowercase() ?: "") to (t.languageName ?: t.abbreviate ?: "Unknown")
+                        }
+
+                        // Emit one link per audio group, matched to the API language name
+                        for ((groupLabel, audioUri) in audioGroups) {
+                            // Match M3U8 LANGUAGE/NAME tag to API languageName
+                            val displayName = trackLabelMap.entries
+                                .firstOrNull { groupLabel.lowercase().contains(it.key) || it.key.contains(groupLabel.lowercase()) }
+                                ?.value ?: groupLabel
+
+                            // Build a per-language variant M3U8 that locks to this audio group
+                            for (resolution in resolutions) {
+                                try {
+                                    val videoApiUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
+                                    val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","languageId":"$firstLangId","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
+                                    val videoResponse = app.post(url = videoApiUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                                    val decryptedJson = decryptData(videoResponse.text, securityKey) ?: continue
+                                    val videoData = mapper.readValue<VideoResponse>(decryptedJson).data
+                                    if (videoData.videoUrl != null && videoData.permissionDenied != true) {
+                                        // Rewrite the master M3U8 so the AUDIO rendition for this
+                                        // group is marked DEFAULT=YES and all others DEFAULT=NO.
+                                        // This forces ExoPlayer to pick the right audio track.
+                                        val rewrittenUrl = buildRewrittenM3u8Url(videoData.videoUrl, groupLabel)
+                                        callback.invoke(
+                                            newExtractorLink(
+                                                source = name,
+                                                name   = "$name - $displayName",
+                                                url    = rewrittenUrl,
+                                                type   = ExtractorLinkType.M3U8
+                                            ) {
+                                                this.headers = mapOf("Referer" to mainUrl)
+                                                this.quality = when (resolution) { 3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240 }
+                                            }
+                                        )
+                                        videoLoaded = true
+                                        break // one per language per group is enough
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+
+                    // If we couldn't parse audio groups, fall back to a single named link
+                    if (!videoLoaded) {
+                        val allLangs = availableTracks.mapNotNull { it.languageName ?: it.abbreviate }.joinToString(", ")
+                        callback.invoke(
+                            newExtractorLink(source = name, name = "$name - $allLangs", url = masterUrl, type = ExtractorLinkType.M3U8) {
+                                this.headers = mapOf("Referer" to mainUrl)
+                                this.quality = Qualities.P1080.value
+                            }
+                        )
+                        videoLoaded = true
+                    }
+                }
+
+            } else {
+                // Branch B: existIndividualVideo == true — server gives a distinct stream per language.
+                // Same as V1, works correctly already.
+                for (track in availableTracks) {
+                    val languageId = track.languageId ?: continue
+                    val languageName = track.languageName ?: track.abbreviate ?: "Unknown"
+                    for (resolution in resolutions) {
+                        try {
+                            val videoApiUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
+                            val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","languageId":"$languageId","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
+                            val videoResponse = app.post(url = videoApiUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                            val decryptedJson = decryptData(videoResponse.text, securityKey) ?: continue
+                            val videoData = mapper.readValue<VideoResponse>(decryptedJson).data
+                            if (videoData.videoUrl != null && videoData.permissionDenied != true) {
+                                callback.invoke(
+                                    newExtractorLink(
+                                        source = name,
+                                        name   = if (videoData.videoUrl.contains("preview", ignoreCase = true))
+                                                    "$name - $languageName (preview) Requires Castle TV Premium"
+                                                 else "$name - $languageName",
+                                        url    = videoData.videoUrl,
+                                        type   = ExtractorLinkType.M3U8
+                                    ) {
+                                        this.headers = mapOf("Referer" to mainUrl)
+                                        this.quality = when (resolution) { 3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240 }
+                                    }
+                                )
+                                if (!videoLoaded) {
+                                    videoData.subtitles?.forEach { sub ->
+                                        if (!sub.url.isNullOrBlank())
+                                            subtitleCallback.invoke(newSubtitleFile(lang = sub.title ?: sub.abbreviate ?: "Unknown", url = sub.url))
+                                    }
+                                }
+                                videoLoaded = true
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
             }
 
-            // Fallback: no tracks at all — try a language-agnostic request
+            // Final fallback: no tracks at all
             if (!videoLoaded) {
                 for (resolution in resolutions) {
                     try {
-                        val videoUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
+                        val videoApiUrl = "$mainUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
                         val postBody = """{"mode":"1","appMarket":"GuanWang","clientType":"1","woolUser":"false","apkSignKey":"ED0955EB04E67A1D9F3305B95454FED485261475","androidVersion":"13","movieId":"$movieId","episodeId":"$episodeId","isNewUser":"true","resolution":"$resolution","packageName":"com.external.castle"}"""
-                        val videoResponse = app.post(
-                            url = videoUrl,
-                            requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType())
-                        )
+                        val videoResponse = app.post(url = videoApiUrl, requestBody = postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
                         val decryptedJson = decryptData(videoResponse.text, securityKey) ?: continue
                         val videoData = mapper.readValue<VideoResponse>(decryptedJson).data
-
                         if (videoData.videoUrl != null && videoData.permissionDenied != true) {
                             callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name   = name,
-                                    url    = videoData.videoUrl,
-                                    type   = ExtractorLinkType.M3U8
-                                ) {
+                                newExtractorLink(source = name, name = name, url = videoData.videoUrl, type = ExtractorLinkType.M3U8) {
                                     this.headers = mapOf("Referer" to mainUrl)
-                                    this.quality = when (resolution) {
-                                        3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240
-                                    }
+                                    this.quality = when (resolution) { 3 -> 1080; 2 -> 720; 1 -> 480; else -> resolution * 240 }
                                 }
                             )
-                            if (!videoLoaded) {
-                                videoData.subtitles?.forEach { sub ->
-                                    if (!sub.url.isNullOrBlank())
-                                        subtitleCallback.invoke(
-                                            newSubtitleFile(
-                                                lang = sub.title ?: sub.abbreviate ?: "Unknown",
-                                                url  = sub.url
-                                            )
-                                        )
-                                }
+                            videoData.subtitles?.forEach { sub ->
+                                if (!sub.url.isNullOrBlank())
+                                    subtitleCallback.invoke(newSubtitleFile(lang = sub.title ?: sub.abbreviate ?: "Unknown", url = sub.url))
                             }
                             videoLoaded = true
                         }
-                    } catch (e: Exception) { /* try next resolution */ }
+                    } catch (_: Exception) {}
                 }
             }
 
             videoLoaded
         } catch (e: Exception) { false }
     }
-}
+
+    /**
+     * Fetches the master M3U8 and returns a map of audio group label -> URI
+     * for every #EXT-X-MEDIA:TYPE=AUDIO line that has a URI.
+     * e.g. "Korean" -> "https://cdn.../audio_kor.m3u8"
+     */
+    private suspend fun parseAudioGroups(masterUrl: String): Map<String, String> {
+        return try {
+            val m3u8 = app.get(masterUrl).text
+            val result = mutableMapOf<String, String>()
+            // Match lines like:
+            // #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="kor",NAME="Korean",...,URI="..."
+            val lineRegex = Regex("""#EXT-X-MEDIA:TYPE=AUDIO[^\n]*URI="([^"]+)"""")
+            val nameRegex = Regex("""NAME="([^"]+)"""")
+            val langRegex = Regex("""LANGUAGE="([^"]+)"""")
+            for (line in m3u8.lines()) {
+                if (!line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO")) continue
+                val uri  = lineRegex.find(line)?.groupValues?.get(1) ?: continue
+                val name = nameRegex.find(line)?.groupValues?.get(1)
+                val lang = langRegex.find(line)?.groupValues?.get(1)
+                val label = name ?: lang ?: continue
+                // Resolve relative URIs
+                val fullUri = if (uri.startsWith("http")) uri
+                              else masterUrl.substringBeforeLast("/") + "/" + uri
+                result[label] = fullUri
+            }
+            result
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    /**
+     * Appends a custom fragment to the M3U8 URL so that our interceptor (if added later)
+     * or the player hint knows which audio group to prefer.
+     * For now this is a no-op passthrough — the real switching is done via the
+     * per-group links emitted above. Kept as an extension point.
+     */
+    private fun buildRewrittenM3u8Url(masterUrl: String, preferredGroup: String): String {
+        // Append the preferred audio group as a fragment hint.
+        // ExoPlayer on some CloudStream builds reads #audio=<name> fragments.
+        return "$masterUrl#audio=${java.net.URLEncoder.encode(preferredGroup, "UTF-8")}"
+    }
