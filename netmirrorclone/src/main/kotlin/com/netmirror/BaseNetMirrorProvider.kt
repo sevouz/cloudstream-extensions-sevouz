@@ -289,6 +289,12 @@ abstract class BaseNetMirrorProvider : MainAPI() {
             callback.invoke(
                 newExtractorLink(name, "$name NewTV", newTvM3u8, type = ExtractorLinkType.M3U8) {
                     this.referer = MAIN_URL
+                    this.quality = Qualities.P1080.value
+                    this.headers = mapOf(
+                        "Cookie" to "hd=on",
+                        "Referer" to MAIN_URL,
+                        "Origin" to MAIN_URL
+                    )
                 }
             )
             hasLink = true
@@ -308,6 +314,12 @@ abstract class BaseNetMirrorProvider : MainAPI() {
                     callback.invoke(
                         newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
                             this.referer = MAIN_URL
+                            this.quality = Qualities.P1080.value
+                            this.headers = mapOf(
+                                "Cookie" to "hd=on",
+                                "Referer" to MAIN_URL,
+                                "Origin" to MAIN_URL
+                            )
                         }
                     )
                     hasLink = true
@@ -343,10 +355,16 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
         return Interceptor { chain ->
-            // Send hd=on on every request for this stream — covers both the
-            // .m3u8 playlist and all the .ts segment chunks that follow.
-            val newReq = chain.request().newBuilder()
-                .header("Cookie", "hd=on")
+            val original = chain.request()
+            // Merge hd=on with any existing Cookie header rather than replacing it
+            val existingCookie = original.header("Cookie") ?: ""
+            val cookie = if (existingCookie.contains("hd=")) existingCookie
+                         else if (existingCookie.isEmpty()) "hd=on"
+                         else "$existingCookie; hd=on"
+            val newReq = original.newBuilder()
+                .header("Cookie", cookie)
+                .header("Referer", MAIN_URL)
+                .header("Origin", MAIN_URL)
                 .build()
             chain.proceed(newReq)
         }
