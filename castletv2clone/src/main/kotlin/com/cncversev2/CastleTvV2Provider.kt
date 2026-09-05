@@ -566,3 +566,4 @@ class CastleTvV2Provider : MainAPI() {
         // ExoPlayer on some CloudStream builds reads #audio=<name> fragments.
         return "$masterUrl#audio=${java.net.URLEncoder.encode(preferredGroup, "UTF-8")}"
     }
+}
