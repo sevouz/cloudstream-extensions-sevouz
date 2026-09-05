@@ -39,10 +39,10 @@ abstract class BaseNetMirrorProvider : MainAPI() {
     private val posterCache = ConcurrentHashMap<String, String>(256)
 
     // Home page result cache: holds the last fetched result and when it was fetched.
-    // Served instantly on repeat opens; refreshed in the background after 5 minutes.
+    // Served instantly on repeat opens; refreshed in the background after 24 hours.
     @Volatile private var cachedHomeItems: List<HomePageList>? = null
     @Volatile private var cachedHomeTime: Long = 0L
-    private val HOME_CACHE_TTL = 5 * 60 * 1000L // 5 minutes
+    private val HOME_CACHE_TTL = 24 * 60 * 60 * 1000L // 24 hours
 
     /** Fetch home page from network and cache the result. Called at plugin load and on TTL expiry. */
     suspend fun prewarmHome() {
@@ -343,13 +343,12 @@ abstract class BaseNetMirrorProvider : MainAPI() {
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
         return Interceptor { chain ->
-            val req = chain.request()
-            if (req.url.toString().contains(".m3u8")) {
-                val newReq = req.newBuilder().header("Cookie", "hd=on").build()
-                chain.proceed(newReq)
-            } else {
-                chain.proceed(req)
-            }
+            // Send hd=on on every request for this stream — covers both the
+            // .m3u8 playlist and all the .ts segment chunks that follow.
+            val newReq = chain.request().newBuilder()
+                .header("Cookie", "hd=on")
+                .build()
+            chain.proceed(newReq)
         }
     }
 

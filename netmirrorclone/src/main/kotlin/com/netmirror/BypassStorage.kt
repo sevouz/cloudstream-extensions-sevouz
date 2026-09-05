@@ -8,8 +8,8 @@ object BypassStorage {
 
     // ── Home page cache (per OTT) ────────────────────────────────────────────
     // Stored as JSON string so the UI can render immediately after an app kill.
-    // TTL matches the in-memory cache: 5 minutes.
-    private const val HOME_CACHE_TTL = 5 * 60 * 1000L
+    // TTL matches the in-memory cache: 24 hours.
+    private const val HOME_CACHE_TTL = 24 * 60 * 60 * 1000L
 
     fun saveHomeCache(ott: String, json: String) {
         prefs?.edit()?.apply {
